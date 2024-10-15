@@ -124,7 +124,7 @@ target_link_libraries(static-lib INTERFACE
     $<$<PLATFORM_ID:FreeBSD>:rt util>
 )
 
-set_target_properties(shared-lib PROPERTIES LINK_FLAGS "-Wl,soname,libiceoryx2_ffi.so")
+target_link_options(shared-lib INTERFACE "-Wl,soname,libiceoryx2_ffi.so")
 set (CMAKE_SHARED_LINKER_FLAGS "-Wl,soname,libiceoryx2_ffi.so")
 
 target_link_libraries(shared-lib INTERFACE
