@@ -105,6 +105,8 @@ add_library(iceoryx2-c::static-lib ALIAS static-lib)
 add_library(shared-lib INTERFACE)
 add_library(iceoryx2-c::shared-lib ALIAS shared-lib)
 
+#set_target_properties(shared-lib PROPERTIES LINK_FLAGS "-Wl,soname,libiceoryx2_ffi.so")
+
 # NOTE the solution with specifying a 'BUILD_INTERFACE' and a 'INSTALL_INTERFACE' was the only one that worked;
 # alternatively an imported library could be created, e.g. 'iceoryx2_ffi' with a corresponding alias, e.g. 'iceoryx2::ffi';
 # the imported lib needs to be present here and also in 'Config.cmake.in' but they need to be named differently, e.g.
@@ -121,6 +123,10 @@ target_link_libraries(static-lib INTERFACE
     $<$<PLATFORM_ID:Darwin>:stdc++>
     $<$<PLATFORM_ID:FreeBSD>:rt util>
 )
+
+set_target_properties(shared-lib PROPERTIES LINK_FLAGS "-Wl,soname,libiceoryx2_ffi.so")
+set (CMAKE_SHARED_LINKER_FLAGS "-Wl,soname,libiceoryx2_ffi.so")
+
 target_link_libraries(shared-lib INTERFACE
     iceoryx2-c::includes-only
     $<BUILD_INTERFACE:${ICEORYX2_C_SHARED_LIB_LINK_FILE}>
