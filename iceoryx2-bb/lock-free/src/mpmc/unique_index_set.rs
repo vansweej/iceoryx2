@@ -27,7 +27,7 @@
 //! let mut memory = [0u8; UniqueIndexSet::const_memory_size(CAPACITY)];
 //! let allocator = BumpAllocator::new(memory.as_mut_ptr() as usize);
 //!
-//! let index_set = unsafe { UniqueIndexSet::new_uninit(CAPACITY) };
+//! let mut index_set = unsafe { UniqueIndexSet::new_uninit(CAPACITY) };
 //! unsafe { index_set.init(&allocator) }.expect("failed to allocate enough memory");
 //!
 //! let new_index = match unsafe { index_set.acquire() } {
@@ -81,23 +81,18 @@
 //! unsafe { index_set.release_raw_index(new_index, ReleaseMode::Default) };
 //! ```
 
+use core::alloc::Layout;
+use core::cell::UnsafeCell;
+use core::fmt::Debug;
+use core::sync::atomic::{fence, Ordering};
 use iceoryx2_bb_elementary::allocator::{AllocationError, BaseAllocator};
+use iceoryx2_bb_elementary::bump_allocator::BumpAllocator;
 use iceoryx2_bb_elementary::enum_gen;
-use iceoryx2_bb_elementary::math::align_to;
 use iceoryx2_bb_elementary::pointer_trait::PointerTrait;
 use iceoryx2_bb_elementary::relocatable_container::RelocatableContainer;
 use iceoryx2_bb_elementary::relocatable_ptr::RelocatablePointer;
 use iceoryx2_bb_log::{fail, fatal_panic};
 use iceoryx2_pal_concurrency_sync::iox_atomic::{IoxAtomicBool, IoxAtomicU64};
-use std::alloc::Layout;
-use std::cell::UnsafeCell;
-use std::fmt::Debug;
-use std::sync::atomic::{fence, Ordering};
-use tiny_fn::tiny_fn;
-
-tiny_fn! {
-    pub struct CleanupCallback = Fn(index: u32);
-}
 
 enum_gen! { UniqueIndexCreationError
   entry:
@@ -145,13 +140,13 @@ pub struct UniqueIndex<'a> {
     index_set: &'a UniqueIndexSet,
 }
 
-impl<'a> Debug for UniqueIndex<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for UniqueIndex<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "UniqueIndex {{ value: {}, index_set addr: {:#x} }}",
             self.value,
-            std::ptr::addr_of!(self.index_set) as u64
+            core::ptr::addr_of!(self.index_set) as u64
         )
     }
 }
@@ -187,7 +182,7 @@ impl Drop for UniqueIndex<'_> {
 /// let mut memory = [0u8; UniqueIndexSet::const_memory_size(CAPACITY)];
 /// let allocator = BumpAllocator::new(memory.as_mut_ptr() as usize);
 ///
-/// let index_set = unsafe { UniqueIndexSet::new_uninit(CAPACITY) };
+/// let mut index_set = unsafe { UniqueIndexSet::new_uninit(CAPACITY) };
 /// unsafe { index_set.init(&allocator) }.expect("failed to allocate enough memory");
 ///
 /// let new_index = match unsafe { index_set.acquire() } {
@@ -200,7 +195,8 @@ impl Drop for UniqueIndex<'_> {
 /// ```
 /// use iceoryx2_bb_lock_free::mpmc::unique_index_set::*;
 /// use iceoryx2_bb_elementary::relocatable_container::*;
-/// use std::mem::MaybeUninit;
+/// use iceoryx2_bb_elementary::bump_allocator::BumpAllocator;
+/// use core::mem::MaybeUninit;
 ///
 /// const CAPACITY: usize = 128;
 ///
@@ -214,15 +210,16 @@ impl Drop for UniqueIndex<'_> {
 ///
 /// impl FixedSizeSet {
 ///     pub fn new() -> Self {
-///         FixedSizeSet {
-///             set: unsafe {
-///                 UniqueIndexSet::new(CAPACITY,
-///                 // distance to data beginning from the start of the set (UniqueIndexSet)
-///                 // member start
-///                 std::mem::size_of::<UniqueIndexSet>() as isize)
-///             },
+///         let mut new_self = FixedSizeSet {
+///             set: unsafe { UniqueIndexSet::new_uninit(CAPACITY) },
 ///             data: [MaybeUninit::uninit(); UniqueIndexSet::const_memory_size(CAPACITY)]
-///         }
+///         };
+///
+///         let allocator = BumpAllocator::new(core::ptr::addr_of!(new_self.data) as usize);
+///         unsafe {
+///             new_self.set.init(&allocator).expect("Enough memory provided.")
+///         };
+///         new_self
 ///     }
 /// }
 /// ```
@@ -257,7 +254,7 @@ impl HeadDetails {
 
     fn value(&self) -> u64 {
         (((self.head & 0x00ffffff) as u64) << 40)
-            | (self.aba as u64) << 24
+            | ((self.aba as u64) << 24)
             | ((self.borrowed_indices & 0x00ffffff) as u64)
     }
 }
@@ -277,15 +274,15 @@ impl RelocatableContainer for UniqueIndexSet {
         }
     }
 
-    unsafe fn init<T: BaseAllocator>(&self, allocator: &T) -> Result<(), AllocationError> {
+    unsafe fn init<T: BaseAllocator>(&mut self, allocator: &T) -> Result<(), AllocationError> {
         if self.is_memory_initialized.load(Ordering::Relaxed) {
             fatal_panic!(from self, "Memory already initialized. Initializing it twice may lead to undefined behavior.");
         }
 
         self.data_ptr.init(fail!(from self, when allocator
             .allocate(Layout::from_size_align_unchecked(
-                std::mem::size_of::<u32>() * (self.capacity + 1) as usize,
-                std::mem::align_of::<u32>())),
+                core::mem::size_of::<u32>() * (self.capacity + 1) as usize,
+                core::mem::align_of::<u32>())),
             "Failed to initialize since the allocation of the data memory failed."
         ));
 
@@ -299,15 +296,6 @@ impl RelocatableContainer for UniqueIndexSet {
         Ok(())
     }
 
-    unsafe fn new(capacity: usize, distance_to_data: isize) -> Self {
-        Self {
-            data_ptr: RelocatablePointer::new(distance_to_data),
-            capacity: capacity as u32,
-            head: IoxAtomicU64::new(0),
-            is_memory_initialized: IoxAtomicBool::new(true),
-        }
-    }
-
     fn memory_size(capacity: usize) -> usize {
         Self::const_memory_size(capacity)
     }
@@ -318,14 +306,14 @@ impl UniqueIndexSet {
     fn verify_init(&self, source: &str) {
         debug_assert!(
             self.is_memory_initialized.load(Ordering::Relaxed),
-            "Undefined behavior when calling \"{}\" and the object is not initialized.",
+            "Undefined behavior when calling UniqueIndexSet::{} and the object is not initialized.",
             source
         );
     }
 
     /// The compile time version of [`UniqueIndexSet::memory_size()`]
     pub const fn const_memory_size(capacity: usize) -> usize {
-        std::mem::size_of::<UnsafeCell<u32>>() * (capacity + 1) + std::mem::align_of::<u32>() - 1
+        core::mem::size_of::<UnsafeCell<u32>>() * (capacity + 1) + core::mem::align_of::<u32>() - 1
     }
 
     /// Acquires a new [`UniqueIndex`]. If the set does not contain any more indices it returns
@@ -333,11 +321,10 @@ impl UniqueIndexSet {
     ///
     /// # Safety
     ///
-    /// * Ensure that either the [`UniqueIndexSet`] was created with [`UniqueIndexSet::new()`] or
-    ///     [`UniqueIndexSet::init()`] was called.
+    /// * Ensure that [`UniqueIndexSet::init()`] was called once.
     ///
     pub unsafe fn acquire(&self) -> Result<UniqueIndex<'_>, UniqueIndexSetAcquireFailure> {
-        self.verify_init("acquire");
+        self.verify_init("acquire()");
         unsafe { self.acquire_raw_index() }.map(|v| UniqueIndex {
             value: v,
             index_set: self,
@@ -392,12 +379,11 @@ impl UniqueIndexSet {
     ///
     /// # Safety
     ///
-    ///  * Ensure that either the [`UniqueIndexSet`] was created with [`UniqueIndexSet::new()`] or
-    ///     [`UniqueIndexSet::init()`] was called.
+    ///  * Ensure that [`UniqueIndexSet::init()`] was called once.
     ///  * The index must be manually released with [`UniqueIndexSet::release_raw_index()`]
     ///    otherwise the index is leaked.
     pub unsafe fn acquire_raw_index(&self) -> Result<u32, UniqueIndexSetAcquireFailure> {
-        self.verify_init("acquire_raw_index");
+        self.verify_init("acquire_raw_index()");
         let mut old_value = self.head.load(Ordering::Acquire);
         let mut old = HeadDetails::from(old_value);
 
@@ -446,11 +432,12 @@ impl UniqueIndexSet {
     ///
     /// # Safety
     ///
+    ///  * Ensure that [`UniqueIndexSet::init()`] was called once.
     ///  * It must be ensured that the index was acquired before and is not released twice.
     ///  * Shall be only used when the index was acquired with
     ///    [`UniqueIndexSet::acquire_raw_index()`]
     pub unsafe fn release_raw_index(&self, index: u32, mode: ReleaseMode) -> ReleaseState {
-        self.verify_init("release_raw_index");
+        self.verify_init("release_raw_index()");
         fence(Ordering::Release);
 
         let mut release_state;
@@ -529,16 +516,7 @@ pub struct FixedSizeUniqueIndexSet<const CAPACITY: usize> {
 
 impl<const CAPACITY: usize> Default for FixedSizeUniqueIndexSet<CAPACITY> {
     fn default() -> Self {
-        Self {
-            state: unsafe {
-                UniqueIndexSet::new(
-                    CAPACITY,
-                    align_to::<UnsafeCell<u32>>(std::mem::size_of::<UniqueIndexSet>()) as isize,
-                )
-            },
-            next_free_index: core::array::from_fn(|i| UnsafeCell::new(i as u32 + 1)),
-            next_free_index_plus_one: UnsafeCell::new(CAPACITY as u32 + 1),
-        }
+        Self::new_with_reduced_capacity(CAPACITY).expect("Does not exceed supported capacity.")
     }
 }
 
@@ -565,16 +543,21 @@ impl<const CAPACITY: usize> FixedSizeUniqueIndexSet<CAPACITY> {
                 "Provided value of capacity is zero.");
         }
 
-        Ok(Self {
-            state: unsafe {
-                UniqueIndexSet::new(
-                    capacity,
-                    align_to::<UnsafeCell<u32>>(std::mem::size_of::<UniqueIndexSet>()) as isize,
-                )
-            },
+        let mut new_self = Self {
+            state: unsafe { UniqueIndexSet::new_uninit(capacity) },
             next_free_index: core::array::from_fn(|i| UnsafeCell::new(i as u32 + 1)),
             next_free_index_plus_one: UnsafeCell::new(capacity as u32 + 1),
-        })
+        };
+
+        let allocator = BumpAllocator::new(core::ptr::addr_of!(new_self.next_free_index) as usize);
+        unsafe {
+            new_self
+                .state
+                .init(&allocator)
+                .expect("All required memory is preallocated.")
+        };
+
+        Ok(new_self)
     }
 
     /// See [`UniqueIndexSet::acquire()`]

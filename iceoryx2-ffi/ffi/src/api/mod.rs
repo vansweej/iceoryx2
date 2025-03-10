@@ -14,9 +14,15 @@
 
 use iceoryx2::prelude::*;
 use iceoryx2_bb_container::semantic_string::SemanticStringError;
+use iceoryx2_bb_elementary::AsCStr;
+use iceoryx2_ffi_macros::CStrRepr;
 
-use core::ffi::{c_int, c_void};
+use core::ffi::{c_char, c_int, c_void};
 
+mod attribute;
+mod attribute_set;
+mod attribute_specifier;
+mod attribute_verifier;
 mod config;
 mod event_id;
 mod file_descriptor;
@@ -26,6 +32,7 @@ mod log;
 mod message_type_details;
 mod node;
 mod node_builder;
+mod node_id;
 mod node_name;
 mod notifier;
 mod port_factory_event;
@@ -44,6 +51,7 @@ mod service_builder;
 mod service_builder_event;
 mod service_builder_pub_sub;
 mod service_name;
+mod signal_handling_mode;
 mod static_config;
 mod static_config_event;
 mod static_config_publish_subscribe;
@@ -57,6 +65,10 @@ mod waitset_attachment_id;
 mod waitset_builder;
 mod waitset_guard;
 
+pub use attribute::*;
+pub use attribute_set::*;
+pub use attribute_specifier::*;
+pub use attribute_verifier::*;
 pub use config::*;
 pub use event_id::*;
 pub use file_descriptor::*;
@@ -65,6 +77,7 @@ pub use listener::*;
 pub use message_type_details::*;
 pub use node::*;
 pub use node_builder::*;
+pub use node_id::*;
 pub use node_name::*;
 pub use notifier::*;
 pub use port_factory_event::*;
@@ -83,6 +96,7 @@ pub use service_builder::*;
 pub use service_builder_event::*;
 pub use service_builder_pub_sub::*;
 pub use service_name::*;
+pub use signal_handling_mode::*;
 pub use static_config::*;
 pub use static_config_event::*;
 pub use static_config_publish_subscribe::*;
@@ -119,7 +133,7 @@ impl From<iox2_callback_progression_e> for CallbackProgression {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, CStrRepr)]
 pub enum iox2_semantic_string_error_e {
     INVALID_CONTENT = IOX2_OK as isize + 1,
     EXCEEDS_MAXIMUM_LENGTH,
@@ -185,4 +199,25 @@ trait HandleToType {
 
 trait AssertNonNullHandle {
     fn assert_non_null(self);
+}
+
+/// Returns a string literal describing the provided [`iox2_semantic_string_error_e`].
+///
+/// # Arguments
+///
+/// * `error` - The error value for which a description should be returned
+///
+/// # Returns
+///
+/// A pointer to a null-terminated string containing the error message.
+/// The string is stored in the .rodata section of the binary.
+///
+/// # Safety
+///
+/// The returned pointer must not be modified or freed and is valid as long as the program runs.
+#[no_mangle]
+pub unsafe extern "C" fn iox2_semantic_string_error_string(
+    error: iox2_semantic_string_error_e,
+) -> *const c_char {
+    error.as_const_cstr().as_ptr() as *const c_char
 }

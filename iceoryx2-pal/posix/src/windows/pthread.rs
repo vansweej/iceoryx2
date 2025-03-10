@@ -15,10 +15,8 @@
 #![allow(unused_variables)]
 
 use core::panic;
-use std::{
-    cell::UnsafeCell, os::windows::prelude::OsStringExt, sync::atomic::Ordering, time::SystemTime,
-    time::UNIX_EPOCH,
-};
+use core::{cell::UnsafeCell, sync::atomic::Ordering};
+use std::{os::windows::prelude::OsStringExt, time::SystemTime, time::UNIX_EPOCH};
 
 use iceoryx2_pal_concurrency_sync::iox_atomic::IoxAtomicU32;
 use iceoryx2_pal_concurrency_sync::rwlock::*;
@@ -29,7 +27,7 @@ use windows_sys::Win32::{
     System::{
         Memory::LocalFree,
         Threading::{
-            CreateThread, ExitThread, GetCurrentThread, GetCurrentThreadId, GetExitCodeThread,
+            CreateThread, GetCurrentThread, GetCurrentThreadId, GetExitCodeThread,
             GetThreadDescription, GetThreadId, SetThreadAffinityMask, SetThreadDescription,
             SetThreadPriority, TerminateThread, WaitForSingleObject, WaitOnAddress,
             WakeByAddressAll, WakeByAddressSingle, INFINITE, THREAD_PRIORITY_ABOVE_NORMAL,
@@ -43,7 +41,7 @@ pub use crate::posix::Struct;
 use crate::{
     posix::Errno,
     posix::{
-        CLOCK_REALTIME, PTHREAD_MUTEX_ERRORCHECK, PTHREAD_MUTEX_RECURSIVE, PTHREAD_MUTEX_ROBUST,
+        PTHREAD_MUTEX_ERRORCHECK, PTHREAD_MUTEX_RECURSIVE, PTHREAD_MUTEX_ROBUST,
         PTHREAD_PREFER_WRITER_NONRECURSIVE_NP, PTHREAD_PREFER_WRITER_NP, PTHREAD_PRIO_NONE,
     },
     win32call,
@@ -145,7 +143,6 @@ impl ThreadStates {
         self.unlock();
         state
     }
-    #[deny(clippy::mut_from_ref)]
 
     fn remove(&self, index: usize) {
         self.lock();
@@ -225,10 +222,6 @@ pub unsafe fn pthread_attr_setschedpolicy(attr: *mut pthread_attr_t, policy: int
     Errno::ESUCCES as int
 }
 
-pub unsafe fn pthread_attr_setscope(attr: *mut pthread_attr_t, scope: int) -> int {
-    Errno::ESUCCES as int
-}
-
 pub unsafe fn pthread_attr_setschedparam(
     attr: *mut pthread_attr_t,
     param: *const sched_param,
@@ -243,14 +236,6 @@ pub unsafe fn pthread_attr_setschedparam(
 pub unsafe fn pthread_attr_setstacksize(attr: *mut pthread_attr_t, stacksize: size_t) -> int {
     (*attr).stacksize = stacksize;
     Errno::ESUCCES as int
-}
-
-pub unsafe fn pthread_attr_setstack(
-    attr: *mut pthread_attr_t,
-    stackaddr: *mut void,
-    stacksize: size_t,
-) -> int {
-    Errno::ENOTSUP as int
 }
 
 pub unsafe fn pthread_attr_setaffinity_np(
@@ -282,7 +267,7 @@ fn to_win_priority(prio: int) -> int {
 
 struct CallbackArguments {
     startup_barrier: Barrier,
-    start_routine: Option<unsafe extern "C" fn(*mut void) -> *mut void>,
+    start_routine: unsafe extern "C" fn(*mut void) -> *mut void,
     arg: *mut void,
 }
 
@@ -294,9 +279,7 @@ unsafe extern "system" fn thread_callback(args: *mut void) -> u32 {
 
     barrier_wait(&(*thread).startup_barrier);
 
-    if let Some(c) = (*thread).start_routine {
-        c((*thread).arg);
-    }
+    start_routine(arg);
 
     0
 }
@@ -304,7 +287,7 @@ unsafe extern "system" fn thread_callback(args: *mut void) -> u32 {
 pub unsafe fn pthread_create(
     thread: *mut pthread_t,
     attributes: *const pthread_attr_t,
-    start_routine: Option<unsafe extern "C" fn(*mut void) -> *mut void>,
+    start_routine: unsafe extern "C" fn(*mut void) -> *mut void,
     arg: *mut void,
 ) -> int {
     thread.write(pthread_t::new());
@@ -394,15 +377,6 @@ pub unsafe fn pthread_getname_np(thread: pthread_t, name: *mut c_char, len: size
     win32call! { LocalFree(wide_name as isize) };
 
     Errno::ESUCCES as int
-}
-
-pub unsafe fn pthread_cancel(thread: pthread_t) -> int {
-    TerminateThread(thread.handle, 0);
-    Errno::ESUCCES as int
-}
-
-pub unsafe fn pthread_exit(value_ptr: *mut void) -> ! {
-    ExitThread(0);
 }
 
 pub unsafe fn pthread_kill(thread: pthread_t, sig: int) -> int {
@@ -600,211 +574,6 @@ pub unsafe fn pthread_rwlock_trywrlock(lock: *mut pthread_rwlock_t) -> int {
     }
 }
 
-pub unsafe fn pthread_rwlock_timedwrlock(
-    lock: *mut pthread_rwlock_t,
-    abs_timeout: *const timespec,
-) -> int {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let timeout = std::cmp::max(
-        0,
-        (*abs_timeout).tv_sec * 1000 + (*abs_timeout).tv_nsec as i64 / 1000000
-            - now.as_millis() as i64,
-    );
-
-    let wait_result = match (*lock).lock {
-        RwLockType::PreferReader(ref l) => l.write_lock(|atomic, value| {
-            win32call! { WaitOnAddress(
-                (atomic as *const IoxAtomicU32).cast(),
-                (value as *const u32).cast(),
-                4,
-                timeout as _,
-            ), ignore ERROR_TIMEOUT };
-            WaitAction::Continue
-        }),
-        RwLockType::PreferWriter(ref l) => l.write_lock(
-            |atomic, value| {
-                win32call! { WaitOnAddress(
-                    (atomic as *const IoxAtomicU32).cast(),
-                    (value as *const u32).cast(),
-                    4,
-                    timeout as _,
-                ), ignore ERROR_TIMEOUT};
-                WaitAction::Continue
-            },
-            |atomic| {
-                WakeByAddressSingle((atomic as *const IoxAtomicU32).cast());
-            },
-            |atomic| {
-                WakeByAddressAll((atomic as *const IoxAtomicU32).cast());
-            },
-        ),
-        _ => {
-            return Errno::EINVAL as _;
-        }
-    };
-
-    if wait_result == WaitResult::Success {
-        Errno::ESUCCES as _
-    } else {
-        Errno::ETIMEDOUT as _
-    }
-}
-
-pub unsafe fn pthread_rwlock_timedrdlock(
-    lock: *mut pthread_rwlock_t,
-    abs_timeout: *const timespec,
-) -> int {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let timeout = std::cmp::max(
-        0,
-        (*abs_timeout).tv_sec * 1000 + (*abs_timeout).tv_nsec as i64 / 1000000
-            - now.as_millis() as i64,
-    );
-
-    let wait_result = match (*lock).lock {
-        RwLockType::PreferReader(ref l) => l.read_lock(|atomic, value| {
-            win32call! { WaitOnAddress(
-                (atomic as *const IoxAtomicU32).cast(),
-                (value as *const u32).cast(),
-                4,
-                timeout as _,
-            ), ignore ERROR_TIMEOUT };
-            WaitAction::Continue
-        }),
-        RwLockType::PreferWriter(ref l) => l.read_lock(|atomic, value| {
-            win32call! {WaitOnAddress(
-                (atomic as *const IoxAtomicU32).cast(),
-                (value as *const u32).cast(),
-                4,
-                timeout as _,
-            ), ignore ERROR_TIMEOUT};
-            WaitAction::Continue
-        }),
-        _ => {
-            return Errno::EINVAL as _;
-        }
-    };
-
-    if wait_result == WaitResult::Success {
-        Errno::ESUCCES as _
-    } else {
-        Errno::ETIMEDOUT as _
-    }
-}
-
-pub unsafe fn pthread_cond_broadcast(cond: *mut pthread_cond_t) -> int {
-    (*cond).cv.notify_all(|atomic| {
-        WakeByAddressAll((atomic as *const IoxAtomicU32).cast());
-    });
-    Errno::ESUCCES as _
-}
-
-pub unsafe fn pthread_cond_signal(cond: *mut pthread_cond_t) -> int {
-    (*cond).cv.notify_one(|atomic| {
-        WakeByAddressSingle((atomic as *const IoxAtomicU32).cast());
-    });
-    Errno::ESUCCES as _
-}
-
-pub unsafe fn pthread_cond_destroy(cond: *mut pthread_cond_t) -> int {
-    Errno::ESUCCES as _
-}
-
-pub unsafe fn pthread_cond_init(cond: *mut pthread_cond_t, attr: *const pthread_condattr_t) -> int {
-    cond.write(pthread_cond_t::new());
-    Errno::ESUCCES as _
-}
-
-pub unsafe fn pthread_cond_wait(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t) -> int {
-    (*cond).cv.wait(
-        &(*mutex).mtx,
-        |atomic| {
-            WakeByAddressSingle((atomic as *const IoxAtomicU32).cast());
-        },
-        |atomic, value| {
-            win32call! { WaitOnAddress(
-                (atomic as *const IoxAtomicU32).cast(),
-                (value as *const u32).cast(),
-                4,
-                INFINITE,
-            )};
-            WaitAction::Continue
-        },
-        |atomic, value| {
-            win32call! {WaitOnAddress(
-                (atomic as *const IoxAtomicU32).cast(),
-                (value as *const u32).cast(),
-                4,
-                INFINITE,
-            )};
-            WaitAction::Continue
-        },
-    );
-
-    Errno::ESUCCES as _
-}
-
-pub unsafe fn pthread_cond_timedwait(
-    cond: *mut pthread_cond_t,
-    mutex: *mut pthread_mutex_t,
-    abstime: *const timespec,
-) -> int {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let timeout = std::cmp::max(
-        0,
-        (*abstime).tv_sec * 1000 + (*abstime).tv_nsec as i64 / 1000000 - now.as_millis() as i64,
-    );
-
-    #[allow(clippy::blocks_in_conditions)]
-    match (*cond).cv.wait(
-        &(*mutex).mtx,
-        |atomic| {
-            win32call! { WakeByAddressSingle((atomic as *const IoxAtomicU32).cast()) };
-        },
-        |atomic, value| {
-            win32call! { WaitOnAddress(
-                (atomic as *const IoxAtomicU32).cast(),
-                (value as *const u32).cast(),
-                4,
-                timeout as _,
-            ), ignore ERROR_TIMEOUT };
-            WaitAction::Abort
-        },
-        |atomic, value| {
-            win32call! { WaitOnAddress(
-                (atomic as *const IoxAtomicU32).cast(),
-                (value as *const u32).cast(),
-                4,
-                timeout as _,
-            ), ignore ERROR_TIMEOUT };
-            WaitAction::Abort
-        },
-    ) {
-        WaitResult::Success => Errno::ESUCCES as _,
-        WaitResult::Interrupted => Errno::ETIMEDOUT as _,
-    }
-}
-
-pub unsafe fn pthread_condattr_init(attr: *mut pthread_condattr_t) -> int {
-    Errno::ESUCCES as _
-}
-
-pub unsafe fn pthread_condattr_destroy(attr: *mut pthread_condattr_t) -> int {
-    Errno::ESUCCES as _
-}
-
-pub unsafe fn pthread_condattr_setclock(attr: *mut pthread_condattr_t, clock_id: clockid_t) -> int {
-    if clock_id != CLOCK_REALTIME {
-        return Errno::EINVAL as _;
-    }
-    Errno::ESUCCES as _
-}
-
-pub unsafe fn pthread_condattr_setpshared(attr: *mut pthread_condattr_t, pshared: int) -> int {
-    // is always IPC capable
-    Errno::ESUCCES as _
-}
-
 pub unsafe fn pthread_mutex_init(
     mtx: *mut pthread_mutex_t,
     attr: *const pthread_mutexattr_t,
@@ -926,7 +695,7 @@ pub unsafe fn pthread_mutex_timedlock(
     };
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let timeout = std::cmp::max(
+    let timeout = core::cmp::max(
         0,
         (*abs_timeout).tv_sec * 1000 + (*abs_timeout).tv_nsec as i64 / 1000000
             - now.as_millis() as i64,
@@ -1020,23 +789,6 @@ pub unsafe fn pthread_mutex_consistent(mtx: *mut pthread_mutex_t) -> int {
     Errno::ESUCCES as _
 }
 
-pub unsafe fn pthread_mutex_setprioceiling(
-    mtx: *mut pthread_mutex_t,
-    prioceiling: int,
-    old_ceiling: *mut int,
-) -> int {
-    Errno::set(Errno::ENOSYS);
-    -1
-}
-
-pub unsafe fn pthread_mutex_getprioceiling(
-    mtx: *mut pthread_mutex_t,
-    prioceiling: *mut int,
-) -> int {
-    Errno::set(Errno::ENOSYS);
-    -1
-}
-
 pub unsafe fn pthread_mutexattr_init(attr: *mut pthread_mutexattr_t) -> int {
     Errno::set(Errno::ESUCCES);
     attr.write(pthread_mutexattr_t::new());
@@ -1045,7 +797,7 @@ pub unsafe fn pthread_mutexattr_init(attr: *mut pthread_mutexattr_t) -> int {
 
 pub unsafe fn pthread_mutexattr_destroy(attr: *mut pthread_mutexattr_t) -> int {
     Errno::set(Errno::ESUCCES);
-    std::ptr::drop_in_place(attr);
+    core::ptr::drop_in_place(attr);
     0
 }
 
@@ -1075,12 +827,4 @@ pub unsafe fn pthread_mutexattr_settype(attr: *mut pthread_mutexattr_t, mtype: i
     Errno::set(Errno::ESUCCES);
     (*attr).mtype = mtype;
     0
-}
-
-pub unsafe fn pthread_mutexattr_setprioceiling(
-    attr: *mut pthread_mutexattr_t,
-    prioceiling: int,
-) -> int {
-    Errno::set(Errno::ENOSYS);
-    -1
 }

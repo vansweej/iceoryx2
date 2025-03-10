@@ -15,16 +15,25 @@
 
 pub mod buffer;
 pub mod console;
+pub mod file;
 #[cfg(feature = "logger_log")]
 pub mod log;
 #[cfg(feature = "logger_tracing")]
 pub mod tracing;
 
-use std::fmt::Arguments;
+/// Sets the [`console::Logger`] as default logger
+pub fn use_console_logger() -> bool {
+    // LazyLock is only available in 'std' but since static values are never dropped in Rust,
+    // we can also use Box::leak
+    let logger = Box::leak(Box::new(console::Logger::new()));
+    crate::set_logger(&*logger)
+}
 
-use crate::LogLevel;
+/// Sets the [`file::Logger`] as default logger
+pub fn use_file_logger(log_file_name: &str) -> bool {
+    // LazyLock is only available in 'std' but since static values are never dropped in Rust,
+    // we can also use Box::leak
+    let logger = Box::leak(Box::new(file::Logger::new(log_file_name)));
 
-pub trait Logger: Send + Sync {
-    /// logs a message
-    fn log(&self, log_level: LogLevel, origin: Arguments, formatted_message: Arguments);
+    crate::set_logger(logger)
 }

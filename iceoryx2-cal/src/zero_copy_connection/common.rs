@@ -12,24 +12,27 @@
 
 #[doc(hidden)]
 pub mod details {
-    use iceoryx2_pal_concurrency_sync::iox_atomic::{IoxAtomicU64, IoxAtomicU8};
-    use std::cell::UnsafeCell;
-    use std::fmt::Debug;
-    use std::marker::PhantomData;
-    use std::sync::atomic::Ordering;
+    use core::cell::UnsafeCell;
+    use core::fmt::Debug;
+    use core::marker::PhantomData;
+    use core::sync::atomic::Ordering;
+    use iceoryx2_bb_elementary::allocator::{AllocationError, BaseAllocator};
+    use iceoryx2_pal_concurrency_sync::iox_atomic::{IoxAtomicU64, IoxAtomicU8, IoxAtomicUsize};
 
     use crate::dynamic_storage::{
         DynamicStorage, DynamicStorageBuilder, DynamicStorageCreateError, DynamicStorageOpenError,
         DynamicStorageOpenOrCreateError,
     };
     use crate::named_concept::*;
+    use crate::shared_memory::SegmentId;
     pub use crate::zero_copy_connection::*;
+    use iceoryx2_bb_container::vec::RelocatableVec;
     use iceoryx2_bb_elementary::relocatable_container::RelocatableContainer;
     use iceoryx2_bb_lock_free::spsc::{
         index_queue::RelocatableIndexQueue,
         safely_overflowing_index_queue::RelocatableSafelyOverflowingIndexQueue,
     };
-    use iceoryx2_bb_log::{fail, fatal_panic};
+    use iceoryx2_bb_log::{fail, fatal_panic, warn};
     use iceoryx2_bb_posix::adaptive_wait::AdaptiveWaitBuilder;
 
     use self::used_chunk_list::RelocatableUsedChunkList;
@@ -120,6 +123,12 @@ pub mod details {
         state_to_remove: State,
     ) {
         let mut current_state = storage.get().state.load(Ordering::Relaxed);
+        if current_state == State::MarkedForDestruction.value() {
+            warn!(from "common::ZeroCopyConnection::cleanup_shared_memory()",
+                    "Trying to remove state {:?} on the connection {:?} which is already marked for destruction.", state_to_remove, storage.name());
+            return;
+        }
+
         loop {
             let new_state = if current_state == state_to_remove.value() {
                 State::MarkedForDestruction.value()
@@ -149,14 +158,37 @@ pub mod details {
     }
 
     #[derive(Debug)]
+    struct SegmentDetails {
+        used_chunk_list: RelocatableUsedChunkList,
+        sample_size: IoxAtomicUsize,
+    }
+
+    impl SegmentDetails {
+        fn new_uninit(number_of_samples: usize) -> Self {
+            Self {
+                used_chunk_list: unsafe { RelocatableUsedChunkList::new_uninit(number_of_samples) },
+                sample_size: IoxAtomicUsize::new(0),
+            }
+        }
+
+        const fn const_memory_size(number_of_samples: usize) -> usize {
+            RelocatableUsedChunkList::const_memory_size(number_of_samples)
+        }
+
+        unsafe fn init<T: BaseAllocator>(&mut self, allocator: &T) -> Result<(), AllocationError> {
+            self.used_chunk_list.init(allocator)
+        }
+    }
+
+    #[derive(Debug)]
     #[repr(C)]
     pub struct SharedManagementData {
         submission_channel: RelocatableSafelyOverflowingIndexQueue,
         completion_channel: RelocatableIndexQueue,
-        used_chunk_list: RelocatableUsedChunkList,
+        segment_details: RelocatableVec<SegmentDetails>,
         max_borrowed_samples: usize,
-        sample_size: usize,
-        number_of_samples: usize,
+        number_of_samples_per_segment: usize,
+        number_of_segments: u8,
         state: IoxAtomicU8,
         init_state: IoxAtomicU64,
         enable_safe_overflow: bool,
@@ -168,8 +200,8 @@ pub mod details {
             completion_channel_buffer_capacity: usize,
             enable_safe_overflow: bool,
             max_borrowed_samples: usize,
-            sample_size: usize,
-            number_of_samples: usize,
+            number_of_samples_per_segment: usize,
+            number_of_segments: u8,
         ) -> Self {
             Self {
                 submission_channel: unsafe {
@@ -180,13 +212,13 @@ pub mod details {
                 completion_channel: unsafe {
                     RelocatableIndexQueue::new_uninit(completion_channel_buffer_capacity)
                 },
-                used_chunk_list: unsafe { RelocatableUsedChunkList::new_uninit(number_of_samples) },
+                segment_details: unsafe { RelocatableVec::new_uninit(number_of_segments as usize) },
                 state: IoxAtomicU8::new(State::None.value()),
                 init_state: IoxAtomicU64::new(0),
                 enable_safe_overflow,
-                sample_size,
                 max_borrowed_samples,
-                number_of_samples,
+                number_of_samples_per_segment,
+                number_of_segments,
             }
         }
 
@@ -194,12 +226,15 @@ pub mod details {
             submission_channel_buffer_capacity: usize,
             completion_channel_buffer_capacity: usize,
             number_of_samples: usize,
+            number_of_segments: u8,
         ) -> usize {
+            let number_of_segments = number_of_segments as usize;
             RelocatableIndexQueue::const_memory_size(completion_channel_buffer_capacity)
                 + RelocatableSafelyOverflowingIndexQueue::const_memory_size(
                     submission_channel_buffer_capacity,
                 )
-                + RelocatableUsedChunkList::const_memory_size(number_of_samples)
+                + SegmentDetails::const_memory_size(number_of_samples) * number_of_segments
+                + RelocatableVec::<SegmentDetails>::const_memory_size(number_of_segments)
         }
     }
 
@@ -209,8 +244,8 @@ pub mod details {
         buffer_size: usize,
         enable_safe_overflow: bool,
         max_borrowed_samples: usize,
-        sample_size: usize,
-        number_of_samples: usize,
+        number_of_samples_per_segment: usize,
+        number_of_segments: u8,
         timeout: Duration,
         config: Configuration<Storage>,
     }
@@ -228,7 +263,8 @@ pub mod details {
             let supplementary_size = SharedManagementData::const_memory_size(
                 self.submission_channel_size(),
                 self.completion_channel_size(),
-                self.number_of_samples,
+                self.number_of_samples_per_segment,
+                self.number_of_segments,
             );
 
             let msg = "Failed to acquire underlying shared memory";
@@ -243,8 +279,23 @@ pub mod details {
                         "{} since the receive channel allocation failed. - This is an implementation bug!", msg);
             fatal_panic!(from self, when unsafe { data.completion_channel.init(allocator) },
                         "{} since the retrieve channel allocation failed. - This is an implementation bug!", msg);
-            fatal_panic!(from self, when unsafe { data.used_chunk_list.init(allocator) },
-                        "{} since the used chunk list allocation failed. - This is an implementation bug!", msg);
+            fatal_panic!(from self, when unsafe { data.segment_details.init(allocator) },
+                        "{} since the used chunk list vector allocation failed. - This is an implementation bug!", msg);
+
+            for _ in 0..self.number_of_segments {
+                if !unsafe {
+                    data.segment_details.push(SegmentDetails::new_uninit(self.number_of_samples_per_segment))
+                } {
+                    fatal_panic!(from self,
+                        "{} since the used chunk list could not be added. - This is an implementation bug!", msg);
+                }
+            }
+
+            for (n, details) in data.segment_details.iter_mut().enumerate() {
+                fatal_panic!(from self, when unsafe { details.init(allocator) },
+                    "{} since the used chunk list for segment id {} failed to allocate memory. - This is an implementation bug!",
+                    msg, n);
+            }
 
             true
         })
@@ -254,8 +305,8 @@ pub mod details {
                                     self.completion_channel_size(),
                                     self.enable_safe_overflow,
                                     self.max_borrowed_samples,
-                                    self.sample_size,
-                                    self.number_of_samples,
+                                    self.number_of_samples_per_segment,
+                                    self.number_of_segments
                                 )
             );
 
@@ -308,16 +359,23 @@ pub mod details {
                         msg, storage.get().enable_safe_overflow, self.enable_safe_overflow);
                 }
 
-                if storage.get().sample_size != self.sample_size {
-                    fail!(from self, with ZeroCopyCreationError::IncompatibleSampleSize,
-                        "{} since the requested sample size is set to {} but should be set to {}.",
-                        msg, self.sample_size, storage.get().sample_size);
-                }
-
-                if storage.get().number_of_samples != self.number_of_samples {
+                if storage.get().number_of_samples_per_segment != self.number_of_samples_per_segment
+                {
                     fail!(from self, with ZeroCopyCreationError::IncompatibleNumberOfSamples,
                         "{} since the requested number of samples is set to {} but should be set to {}.",
-                        msg, self.number_of_samples, storage.get().number_of_samples);
+                        msg, self.number_of_samples_per_segment, storage.get().number_of_samples_per_segment);
+                }
+
+                if storage.get().number_of_segments != self.number_of_segments {
+                    fail!(from self, with ZeroCopyCreationError::IncompatibleNumberOfSegments,
+                        "{} since the requested number of segments is set to {} but should be set to {}.",
+                        msg, self.number_of_segments, storage.get().number_of_segments);
+                }
+
+                if storage.get().number_of_segments != self.number_of_segments {
+                    fail!(from self, with ZeroCopyCreationError::IncompatibleNumberOfSegments,
+                        "{} since the requested number of segments is set to {} but should be set to {}.",
+                        msg, self.number_of_segments, storage.get().number_of_segments);
                 }
             }
 
@@ -366,8 +424,8 @@ pub mod details {
                 buffer_size: DEFAULT_BUFFER_SIZE,
                 enable_safe_overflow: DEFAULT_ENABLE_SAFE_OVERFLOW,
                 max_borrowed_samples: DEFAULT_MAX_BORROWED_SAMPLES,
-                sample_size: 0,
-                number_of_samples: 0,
+                number_of_samples_per_segment: 0,
+                number_of_segments: DEFAULT_MAX_SUPPORTED_SHARED_MEMORY_SEGMENTS,
                 config: Configuration::default(),
                 timeout: Duration::ZERO,
             }
@@ -382,6 +440,11 @@ pub mod details {
     impl<Storage: DynamicStorage<SharedManagementData>>
         ZeroCopyConnectionBuilder<Connection<Storage>> for Builder<Storage>
     {
+        fn max_supported_shared_memory_segments(mut self, value: u8) -> Self {
+            self.number_of_segments = value.max(1);
+            self
+        }
+
         fn buffer_size(mut self, value: usize) -> Self {
             self.buffer_size = value.clamp(1, usize::MAX);
             self
@@ -397,8 +460,8 @@ pub mod details {
             self
         }
 
-        fn number_of_samples(mut self, value: usize) -> Self {
-            self.number_of_samples = value;
+        fn number_of_samples_per_segment(mut self, value: usize) -> Self {
+            self.number_of_samples_per_segment = value;
             self
         }
 
@@ -408,12 +471,9 @@ pub mod details {
         }
 
         fn create_sender(
-            mut self,
-            sample_size: usize,
+            self,
         ) -> Result<<Connection<Storage> as ZeroCopyConnection>::Sender, ZeroCopyCreationError>
         {
-            self.sample_size = sample_size;
-
             let msg = "Unable to create sender";
             let storage = fail!(from self, when self.create_or_open_shm(),
             "{} since the corresponding connection could not be created or opened", msg);
@@ -427,12 +487,9 @@ pub mod details {
         }
 
         fn create_receiver(
-            mut self,
-            sample_size: usize,
+            self,
         ) -> Result<<Connection<Storage> as ZeroCopyConnection>::Receiver, ZeroCopyCreationError>
         {
-            self.sample_size = sample_size;
-
             let msg = "Unable to create receiver";
             let storage = fail!(from self, when self.create_or_open_shm(),
             "{} since the corresponding connection could not be created or opened", msg);
@@ -470,6 +527,10 @@ pub mod details {
             self.storage.get().submission_channel.capacity()
         }
 
+        fn max_supported_shared_memory_segments(&self) -> u8 {
+            self.storage.get().number_of_segments
+        }
+
         fn max_borrowed_samples(&self) -> usize {
             self.storage.get().max_borrowed_samples
         }
@@ -485,39 +546,52 @@ pub mod details {
     }
 
     impl<Storage: DynamicStorage<SharedManagementData>> ZeroCopySender for Sender<Storage> {
-        fn try_send(&self, ptr: PointerOffset) -> Result<Option<PointerOffset>, ZeroCopySendError> {
+        fn try_send(
+            &self,
+            ptr: PointerOffset,
+            sample_size: usize,
+        ) -> Result<Option<PointerOffset>, ZeroCopySendError> {
             let msg = "Unable to send sample";
+            let storage = self.storage.get();
 
-            if !self.storage.get().enable_safe_overflow
-                && self.storage.get().submission_channel.is_full()
-            {
+            if !storage.enable_safe_overflow && storage.submission_channel.is_full() {
                 fail!(from self, with ZeroCopySendError::ReceiveBufferFull,
                              "{} since the receive buffer is full.", msg);
             }
 
-            if !self
-                .storage
-                .get()
-                .used_chunk_list
-                .insert(ptr.value() / self.storage.get().sample_size)
-            {
-                fail!(from self, with ZeroCopySendError::UsedChunkListFull,
-                    "{} since the used chunk list is full.", msg);
-            }
+            let segment_id = ptr.segment_id().value() as usize;
+            let segment_details = &storage.segment_details[segment_id];
+            segment_details
+                .sample_size
+                .store(sample_size, Ordering::Relaxed);
+            debug_assert!(ptr.offset() % sample_size == 0);
+            let index = ptr.offset() / sample_size;
 
-            match unsafe { self.storage.get().submission_channel.push(ptr.value()) } {
+            debug_assert!(segment_id < storage.number_of_segments as usize);
+
+            let did_not_send_same_offset_twice = segment_details.used_chunk_list.insert(index);
+            debug_assert!(did_not_send_same_offset_twice);
+
+            match unsafe { storage.submission_channel.push(ptr.as_value()) } {
                 Some(v) => {
-                    if !self
-                        .storage
-                        .get()
-                        .used_chunk_list
-                        .remove(v / self.storage.get().sample_size)
-                    {
+                    let pointer_offset = PointerOffset::from_value(v);
+                    let segment_id = pointer_offset.segment_id().value() as usize;
+
+                    let segment_details = &storage.segment_details[segment_id];
+                    debug_assert!(
+                        pointer_offset.offset()
+                            % segment_details.sample_size.load(Ordering::Relaxed)
+                            == 0
+                    );
+                    let index = pointer_offset.offset()
+                        / segment_details.sample_size.load(Ordering::Relaxed);
+
+                    if !segment_details.used_chunk_list.remove(index) {
                         fail!(from self, with ZeroCopySendError::ConnectionCorrupted,
-                        "{} since an invalid offset was returned on overflow.", msg);
+                        "{} since the invalid offset {:?} was returned on overflow.", msg, pointer_offset);
                     }
 
-                    Ok(Some(PointerOffset::new(v)))
+                    Ok(Some(pointer_offset))
                 }
                 None => Ok(None),
             }
@@ -526,6 +600,7 @@ pub mod details {
         fn blocking_send(
             &self,
             ptr: PointerOffset,
+            sample_size: usize,
         ) -> Result<Option<PointerOffset>, ZeroCopySendError> {
             if !self.storage.get().enable_safe_overflow {
                 AdaptiveWaitBuilder::new()
@@ -535,33 +610,55 @@ pub mod details {
                     .unwrap();
             }
 
-            self.try_send(ptr)
+            self.try_send(ptr, sample_size)
         }
 
         fn reclaim(&self) -> Result<Option<PointerOffset>, ZeroCopyReclaimError> {
-            match unsafe { self.storage.get().completion_channel.pop() } {
+            let msg = "Unable to reclaim sample";
+
+            let storage = self.storage.get();
+            match unsafe { storage.completion_channel.pop() } {
                 None => Ok(None),
                 Some(v) => {
-                    if !self
-                        .storage
-                        .get()
-                        .used_chunk_list
-                        .remove(v / self.storage.get().sample_size)
-                    {
-                        fail!(from self, with ZeroCopyReclaimError::ReceiverReturnedCorruptedOffset,
-                        "Unable to reclaim sample since the receiver returned the corrupted offset {}.", v);
+                    let pointer_offset = PointerOffset::from_value(v);
+                    let segment_id = pointer_offset.segment_id().value() as usize;
+
+                    debug_assert!(segment_id < storage.number_of_segments as usize);
+
+                    if segment_id >= storage.segment_details.len() {
+                        fail!(from self, with ZeroCopyReclaimError::ReceiverReturnedCorruptedPointerOffset,
+                            "{} since the receiver returned a non-existing segment id {:?}.",
+                            msg, pointer_offset);
                     }
-                    Ok(Some(PointerOffset::new(v)))
+
+                    let segment_details = &storage.segment_details[segment_id];
+                    debug_assert!(
+                        pointer_offset.offset()
+                            % segment_details.sample_size.load(Ordering::Relaxed)
+                            == 0
+                    );
+                    let index = pointer_offset.offset()
+                        / segment_details.sample_size.load(Ordering::Relaxed);
+
+                    if !segment_details.used_chunk_list.remove(index) {
+                        fail!(from self, with ZeroCopyReclaimError::ReceiverReturnedCorruptedPointerOffset,
+                            "{} since the receiver returned a corrupted offset {:?}.",
+                            msg, pointer_offset);
+                    }
+                    Ok(Some(pointer_offset))
                 }
             }
         }
 
         unsafe fn acquire_used_offsets<F: FnMut(PointerOffset)>(&self, mut callback: F) {
-            let sample_size = self.storage.get().sample_size;
-            self.storage
-                .get()
-                .used_chunk_list
-                .remove_all(|index| callback(PointerOffset::new(index * sample_size)));
+            for (n, segment_details) in self.storage.get().segment_details.iter().enumerate() {
+                segment_details.used_chunk_list.remove_all(|index| {
+                    callback(PointerOffset::from_offset_and_segment_id(
+                        index * segment_details.sample_size.load(Ordering::Relaxed),
+                        SegmentId::new(n as u8),
+                    ))
+                });
+            }
         }
     }
 
@@ -600,6 +697,10 @@ pub mod details {
             self.storage.get().submission_channel.capacity()
         }
 
+        fn max_supported_shared_memory_segments(&self) -> u8 {
+            self.storage.get().number_of_segments
+        }
+
         fn max_borrowed_samples(&self) -> usize {
             self.storage.get().max_borrowed_samples
         }
@@ -630,13 +731,13 @@ pub mod details {
                 None => Ok(None),
                 Some(v) => {
                     *self.borrow_counter() += 1;
-                    Ok(Some(PointerOffset::new(v)))
+                    Ok(Some(PointerOffset::from_value(v)))
                 }
             }
         }
 
         fn release(&self, ptr: PointerOffset) -> Result<(), ZeroCopyReleaseError> {
-            match unsafe { self.storage.get().completion_channel.push(ptr.value()) } {
+            match unsafe { self.storage.get().completion_channel.push(ptr.as_value()) } {
                 true => {
                     *self.borrow_counter() -= 1;
                     Ok(())
@@ -688,11 +789,67 @@ pub mod details {
             Ok(())
         }
     }
+    impl<Storage: DynamicStorage<SharedManagementData>> Connection<Storage> {
+        fn open_storage(
+            name: &FileName,
+            config: &<Connection<Storage> as NamedConceptMgmt>::Configuration,
+            msg: &str,
+        ) -> Result<Storage, ZeroCopyPortRemoveError> {
+            let origin = "Connection::open_storage()";
+            match <<Storage as DynamicStorage<SharedManagementData>>::Builder<'_> as NamedConceptBuilder<
+                    Storage>>::new(name)
+                       .config(&config.dynamic_storage_config).open() {
+                           Ok(storage) => Ok(storage),
+                           Err(DynamicStorageOpenError::VersionMismatch) => {
+                               fail!(from origin, with ZeroCopyPortRemoveError::VersionMismatch,
+                                   "{msg} since the underlying dynamic storage has a different iceoryx2 version.");
+                           }
+                           Err(DynamicStorageOpenError::InitializationNotYetFinalized) => {
+                               fail!(from origin, with ZeroCopyPortRemoveError::InsufficientPermissions,
+                                   "{msg} due to insufficient permissions.");
+                           }
+                           Err(DynamicStorageOpenError::DoesNotExist) => {
+                               fail!(from origin, with ZeroCopyPortRemoveError::DoesNotExist,
+                                   "{msg} since the underlying dynamic storage does not exist.");
+                           }
+                           Err(DynamicStorageOpenError::InternalError) => {
+                               fail!(from origin, with ZeroCopyPortRemoveError::InternalError,
+                                   "{msg} due to an internal error.");
+                           }
+                       }
+        }
+    }
 
     impl<Storage: DynamicStorage<SharedManagementData>> ZeroCopyConnection for Connection<Storage> {
         type Sender = Sender<Storage>;
         type Builder = Builder<Storage>;
         type Receiver = Receiver<Storage>;
+
+        unsafe fn remove_sender(
+            name: &FileName,
+            config: &Self::Configuration,
+        ) -> Result<(), ZeroCopyPortRemoveError> {
+            let storage = Self::open_storage(
+                name,
+                config,
+                "Unable to remove forcefully the sender of the Zero Copy Connection",
+            )?;
+            cleanup_shared_memory(&storage, State::Sender);
+            Ok(())
+        }
+
+        unsafe fn remove_receiver(
+            name: &FileName,
+            config: &Self::Configuration,
+        ) -> Result<(), ZeroCopyPortRemoveError> {
+            let storage = Self::open_storage(
+                name,
+                config,
+                "Unable to remove forcefully the receiver of the Zero Copy Connection",
+            )?;
+            cleanup_shared_memory(&storage, State::Receiver);
+            Ok(())
+        }
 
         fn does_support_safe_overflow() -> bool {
             true

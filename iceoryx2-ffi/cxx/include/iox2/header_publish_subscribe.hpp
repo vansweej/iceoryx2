@@ -30,8 +30,8 @@ class HeaderPublishSubscribe {
     /// Returns the [`UniquePublisherId`] of the source [`Publisher`].
     auto publisher_id() const -> UniquePublisherId;
 
-    /// Returns the [`Layout`] of the corresponding payload.
-    auto payload_type_layout() const -> iox::Layout;
+    /// Returns the number of [`Payload`] elements in the received [`Sample`].
+    auto number_of_elements() const -> uint64_t;
 
   private:
     template <ServiceType, typename, typename>
@@ -42,7 +42,7 @@ class HeaderPublishSubscribe {
     explicit HeaderPublishSubscribe(iox2_publish_subscribe_header_h handle);
     void drop();
 
-    iox2_publish_subscribe_header_h m_handle;
+    iox2_publish_subscribe_header_h m_handle = nullptr;
 };
 } // namespace iox2
 

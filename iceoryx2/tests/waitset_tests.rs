@@ -12,12 +12,14 @@
 
 #[generic_tests::define]
 mod waitset {
-    use std::time::{Duration, Instant};
+    use core::time::Duration;
+    use std::time::Instant;
 
     use iceoryx2::port::listener::Listener;
     use iceoryx2::port::notifier::Notifier;
-    use iceoryx2::port::waitset::{WaitSetAttachmentError, WaitSetRunError};
     use iceoryx2::prelude::{WaitSetBuilder, *};
+    use iceoryx2::testing::*;
+    use iceoryx2::waitset::{WaitSetAttachmentError, WaitSetRunError};
     use iceoryx2_bb_posix::config::test_directory;
     use iceoryx2_bb_posix::directory::Directory;
     use iceoryx2_bb_posix::file::Permission;
@@ -85,7 +87,7 @@ mod waitset {
     #[test]
     fn calling_run_on_empty_waitset_fails<S: Service>() {
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
-        let result = sut.try_wait_and_process(|_| {});
+        let result = sut.wait_and_process_once(|_| CallbackProgression::Continue);
 
         assert_that!(result.err(), eq Some(WaitSetRunError::NoAttachments));
     }
@@ -98,7 +100,8 @@ mod waitset {
         const LISTENER_LIMIT: usize = 16;
         const EXTERNAL_LIMIT: usize = 16;
 
-        let node = NodeBuilder::new().create::<S>().unwrap();
+        let config = generate_isolated_config();
+        let node = NodeBuilder::new().config(&config).create::<S>().unwrap();
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
         let mut listeners = vec![];
         let mut sockets = vec![];
@@ -139,7 +142,8 @@ mod waitset {
     where
         <S::Event as Event>::Listener: SynchronousMultiplexing,
     {
-        let node = NodeBuilder::new().create::<S>().unwrap();
+        let config = generate_isolated_config();
+        let node = NodeBuilder::new().config(&config).create::<S>().unwrap();
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
 
         let (listener, _) = create_event::<S>(&node);
@@ -157,7 +161,8 @@ mod waitset {
     where
         <S::Event as Event>::Listener: SynchronousMultiplexing,
     {
-        let node = NodeBuilder::new().create::<S>().unwrap();
+        let config = generate_isolated_config();
+        let node = NodeBuilder::new().config(&config).create::<S>().unwrap();
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
 
         let (listener, _) = create_event::<S>(&node);
@@ -176,7 +181,8 @@ mod waitset {
         <S::Event as Event>::Listener: SynchronousMultiplexing,
     {
         set_log_level(LogLevel::Debug);
-        let node = NodeBuilder::new().create::<S>().unwrap();
+        let config = generate_isolated_config();
+        let node = NodeBuilder::new().config(&config).create::<S>().unwrap();
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
 
         let (listener_1, notifier_1) = create_event::<S>(&node);
@@ -197,7 +203,7 @@ mod waitset {
         let mut receiver_1_triggered = false;
         let mut receiver_2_triggered = false;
 
-        sut.try_wait_and_process(|attachment_id| {
+        sut.wait_and_process_once(|attachment_id| {
             if attachment_id.has_event_from(&listener_1_guard) {
                 listener_1_triggered = true;
             } else if attachment_id.has_event_from(&listener_2_guard) {
@@ -209,6 +215,8 @@ mod waitset {
             } else {
                 test_fail!("only attachments shall trigger");
             }
+
+            CallbackProgression::Continue
         })
         .unwrap();
 
@@ -222,7 +230,8 @@ mod waitset {
         <S::Event as Event>::Listener: SynchronousMultiplexing,
     {
         let _watchdog = Watchdog::new();
-        let node = NodeBuilder::new().create::<S>().unwrap();
+        let config = generate_isolated_config();
+        let node = NodeBuilder::new().config(&config).create::<S>().unwrap();
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
 
         let (listener, _) = create_event::<S>(&node);
@@ -231,10 +240,11 @@ mod waitset {
 
         let mut callback_called = false;
         let start = Instant::now();
-        sut.try_wait_and_process(|id| {
+        sut.wait_and_process_once(|id| {
             callback_called = true;
             assert_that!(id.has_event_from(&tick_guard), eq true);
             assert_that!(id.has_missed_deadline(&tick_guard), eq false);
+            CallbackProgression::Continue
         })
         .unwrap();
 
@@ -248,18 +258,67 @@ mod waitset {
         <S::Event as Event>::Listener: SynchronousMultiplexing,
     {
         let _watchdog = Watchdog::new();
-        let node = NodeBuilder::new().create::<S>().unwrap();
+        let config = generate_isolated_config();
+        let node = NodeBuilder::new().config(&config).create::<S>().unwrap();
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
 
         let (listener, _) = create_event::<S>(&node);
         let guard = sut.attach_deadline(&listener, TIMEOUT).unwrap();
 
         let start = Instant::now();
-        sut.try_wait_and_process(|id| {
+        sut.wait_and_process_once(|id| {
             assert_that!(id.has_missed_deadline(&guard), eq true);
+            CallbackProgression::Continue
         })
         .unwrap();
 
+        assert_that!(start.elapsed(), time_at_least TIMEOUT);
+    }
+
+    #[test]
+    fn run_does_not_block_longer_than_provided_timeout<S: Service>()
+    where
+        <S::Event as Event>::Listener: SynchronousMultiplexing,
+    {
+        let _watchdog = Watchdog::new();
+        let sut = WaitSetBuilder::new().create::<S>().unwrap();
+
+        let _tick_guard = sut.attach_interval(Duration::MAX).unwrap();
+
+        let mut callback_called = false;
+        let start = Instant::now();
+        sut.wait_and_process_once_with_timeout(
+            |_| {
+                callback_called = true;
+                CallbackProgression::Continue
+            },
+            TIMEOUT,
+        )
+        .unwrap();
+
+        assert_that!(callback_called, eq false);
+        assert_that!(start.elapsed(), time_at_least TIMEOUT);
+    }
+
+    #[test]
+    fn run_does_block_until_interval_when_user_timeout_is_larger<S: Service>()
+    where
+        <S::Event as Event>::Listener: SynchronousMultiplexing,
+    {
+        let _watchdog = Watchdog::new();
+        let sut = WaitSetBuilder::new().create::<S>().unwrap();
+
+        let _tick_guard = sut.attach_interval(TIMEOUT).unwrap();
+
+        let mut callback_called = false;
+        let start = Instant::now();
+        sut.wait_and_process_once(|_| {
+            callback_called = true;
+            CallbackProgression::Continue
+        })
+        .unwrap();
+
+        assert_that!(callback_called, eq true);
         assert_that!(start.elapsed(), time_at_least TIMEOUT);
     }
 
@@ -268,7 +327,8 @@ mod waitset {
     where
         <S::Event as Event>::Listener: SynchronousMultiplexing,
     {
-        let node = NodeBuilder::new().create::<S>().unwrap();
+        let config = generate_isolated_config();
+        let node = NodeBuilder::new().config(&config).create::<S>().unwrap();
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
 
         let (listener_1, notifier_1) = create_event::<S>(&node);
@@ -295,7 +355,7 @@ mod waitset {
         let mut receiver_1_triggered = false;
         let mut receiver_2_triggered = false;
 
-        sut.try_wait_and_process(|attachment_id| {
+        sut.wait_and_process_once(|attachment_id| {
             if attachment_id.has_event_from(&listener_1_guard) {
                 listener_1_triggered = true;
             } else if attachment_id.has_missed_deadline(&listener_2_guard) {
@@ -307,6 +367,8 @@ mod waitset {
             } else {
                 test_fail!("only attachments shall trigger");
             }
+
+            CallbackProgression::Continue
         })
         .unwrap();
 
@@ -335,7 +397,7 @@ mod waitset {
         let mut tick_3_triggered = false;
         let mut tick_4_triggered = false;
 
-        sut.try_wait_and_process(|attachment_id| {
+        sut.wait_and_process_once(|attachment_id| {
             if attachment_id.has_event_from(&tick_1_guard) {
                 tick_1_triggered = true;
             } else if attachment_id.has_event_from(&tick_2_guard) {
@@ -347,6 +409,8 @@ mod waitset {
             } else {
                 test_fail!("only attachments shall trigger");
             }
+
+            CallbackProgression::Continue
         })
         .unwrap();
 
@@ -357,11 +421,37 @@ mod waitset {
     }
 
     #[test]
+    fn wait_and_process_stops_when_requested<S: Service>()
+    where
+        <S::Event as Event>::Listener: SynchronousMultiplexing,
+    {
+        let sut = WaitSetBuilder::new().create::<S>().unwrap();
+
+        let _tick_1_guard = sut.attach_interval(Duration::from_nanos(1)).unwrap();
+        let _tick_2_guard = sut.attach_interval(Duration::from_nanos(1)).unwrap();
+        let _tick_3_guard = sut.attach_interval(TIMEOUT * 1000).unwrap();
+        let _tick_4_guard = sut.attach_interval(TIMEOUT * 1000).unwrap();
+
+        std::thread::sleep(TIMEOUT);
+
+        let mut counter = 0;
+
+        sut.wait_and_process(|_| {
+            counter += 1;
+            CallbackProgression::Stop
+        })
+        .unwrap();
+
+        assert_that!(counter, eq 1);
+    }
+
+    #[test]
     fn run_lists_mixed<S: Service>()
     where
         <S::Event as Event>::Listener: SynchronousMultiplexing,
     {
-        let node = NodeBuilder::new().create::<S>().unwrap();
+        let config = generate_isolated_config();
+        let node = NodeBuilder::new().config(&config).create::<S>().unwrap();
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
 
         let (listener_1, notifier_1) = create_event::<S>(&node);
@@ -392,7 +482,7 @@ mod waitset {
         let mut deadline_1_missed = false;
         let mut deadline_2_missed = false;
 
-        sut.try_wait_and_process(|attachment_id| {
+        sut.wait_and_process_once(|attachment_id| {
             if attachment_id.has_event_from(&tick_1_guard) {
                 tick_1_triggered = true;
             } else if attachment_id.has_event_from(&tick_2_guard) {
@@ -412,6 +502,8 @@ mod waitset {
             } else {
                 test_fail!("only attachments shall trigger");
             }
+
+            CallbackProgression::Continue
         })
         .unwrap();
 
@@ -430,7 +522,8 @@ mod waitset {
     where
         <S::Event as Event>::Listener: SynchronousMultiplexing,
     {
-        let node = NodeBuilder::new().create::<S>().unwrap();
+        let config = generate_isolated_config();
+        let node = NodeBuilder::new().config(&config).create::<S>().unwrap();
         let sut = WaitSetBuilder::new().create::<S>().unwrap();
 
         let (listener_1, notifier_1) = create_event::<S>(&node);
@@ -444,7 +537,7 @@ mod waitset {
         let mut missed_deadline = false;
         let mut received_event = false;
 
-        sut.try_wait_and_process(|attachment_id| {
+        sut.wait_and_process_once(|attachment_id| {
             if attachment_id.has_event_from(&deadline_1_guard) {
                 received_event = true;
             } else if attachment_id.has_missed_deadline(&deadline_1_guard) {
@@ -452,11 +545,58 @@ mod waitset {
             } else {
                 test_fail!("only attachments shall trigger");
             }
+
+            CallbackProgression::Continue
         })
         .unwrap();
 
         assert_that!(missed_deadline, eq false);
         assert_that!(received_event, eq true);
+    }
+
+    #[test]
+    fn after_missed_deadline_is_reported_the_waitset_waits_again<S: Service>()
+    where
+        <S::Event as Event>::Listener: SynchronousMultiplexing,
+    {
+        let sut = WaitSetBuilder::new().create::<S>().unwrap();
+
+        let _interval_guard = sut.attach_interval(TIMEOUT).unwrap();
+        let now = Instant::now();
+
+        sut.wait_and_process_once(|_| CallbackProgression::Continue)
+            .unwrap();
+
+        assert_that!(now.elapsed(), time_at_least TIMEOUT);
+        let now = Instant::now();
+
+        sut.wait_and_process_once(|_| CallbackProgression::Continue)
+            .unwrap();
+
+        assert_that!(now.elapsed(), time_at_least TIMEOUT / 2);
+    }
+
+    #[test]
+    fn signal_handling_mechanism_can_be_configured<S: Service>() {
+        let sut_1 = WaitSetBuilder::new()
+            .signal_handling_mode(SignalHandlingMode::Disabled)
+            .create::<S>()
+            .unwrap();
+
+        let sut_2 = WaitSetBuilder::new()
+            .signal_handling_mode(SignalHandlingMode::HandleTerminationRequests)
+            .create::<S>()
+            .unwrap();
+
+        assert_that!(sut_1.signal_handling_mode(), eq SignalHandlingMode::Disabled);
+        assert_that!(sut_2.signal_handling_mode(), eq SignalHandlingMode::HandleTerminationRequests);
+    }
+
+    #[test]
+    fn by_default_termination_signals_are_handled<S: Service>() {
+        let sut = WaitSetBuilder::new().create::<S>().unwrap();
+
+        assert_that!(sut.signal_handling_mode(), eq SignalHandlingMode::HandleTerminationRequests);
     }
 
     #[instantiate_tests(<iceoryx2::service::ipc::Service>)]

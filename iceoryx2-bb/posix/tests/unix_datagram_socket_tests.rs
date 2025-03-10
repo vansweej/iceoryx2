@@ -10,6 +10,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::time::Duration;
 use iceoryx2_bb_container::semantic_string::SemanticString;
 use iceoryx2_bb_posix::barrier::*;
 use iceoryx2_bb_posix::config::*;
@@ -17,6 +19,7 @@ use iceoryx2_bb_posix::creation_mode::*;
 use iceoryx2_bb_posix::file::*;
 use iceoryx2_bb_posix::file_descriptor::*;
 use iceoryx2_bb_posix::socket_ancillary::*;
+use iceoryx2_bb_posix::testing::create_test_directory;
 use iceoryx2_bb_posix::unique_system_id::UniqueSystemId;
 use iceoryx2_bb_posix::unix_datagram_socket::*;
 use iceoryx2_bb_system_types::file_name::FileName;
@@ -24,9 +27,7 @@ use iceoryx2_bb_system_types::file_path::FilePath;
 use iceoryx2_bb_testing::assert_that;
 use iceoryx2_bb_testing::test_requires;
 use iceoryx2_pal_posix::posix::POSIX_SUPPORT_UNIX_DATAGRAM_SOCKETS_ANCILLARY_DATA;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
 use std::time::Instant;
 
 const TIMEOUT: Duration = Duration::from_millis(100);
@@ -91,6 +92,7 @@ impl Drop for TestFixture {
 
 #[test]
 fn unix_datagram_socket_send_receive_works() {
+    create_test_directory();
     let socket_name = generate_socket_name();
     let sut_receiver = UnixDatagramReceiverBuilder::new(&socket_name)
         .permission(Permission::OWNER_ALL)
@@ -116,6 +118,7 @@ fn unix_datagram_socket_send_receive_works() {
 
 #[test]
 fn unix_datagram_socket_adjust_buffer_size_works() {
+    create_test_directory();
     let socket_name = generate_socket_name();
     let mut sut_receiver = UnixDatagramReceiverBuilder::new(&socket_name)
         .permission(Permission::OWNER_ALL)
@@ -136,6 +139,7 @@ fn unix_datagram_socket_adjust_buffer_size_works() {
 
 #[test]
 fn unix_datagram_socket_non_blocking_mode_returns_zero_when_nothing_was_received() {
+    create_test_directory();
     let socket_name = generate_socket_name();
     let sut_receiver = UnixDatagramReceiverBuilder::new(&socket_name)
         .permission(Permission::OWNER_ALL)
@@ -155,6 +159,7 @@ fn unix_datagram_socket_non_blocking_mode_returns_zero_when_nothing_was_received
 
 #[test]
 fn unix_datagram_socket_blocking_mode_blocks() {
+    create_test_directory();
     let socket_name = generate_socket_name();
     let received_message = AtomicBool::new(false);
     let handle = BarrierHandle::new();
@@ -194,6 +199,7 @@ fn unix_datagram_socket_blocking_mode_blocks() {
 
 #[test]
 fn unix_datagram_socket_timeout_blocks_at_least() {
+    create_test_directory();
     let socket_name = generate_socket_name();
     let handle = BarrierHandle::new();
     let handle_2 = BarrierHandle::new();
@@ -234,6 +240,7 @@ fn unix_datagram_socket_sending_receiving_with_single_fd_works() {
 
     let mut test = TestFixture::new();
 
+    create_test_directory();
     let socket_name = generate_socket_name();
     let sut_receiver = UnixDatagramReceiverBuilder::new(&socket_name)
         .permission(Permission::OWNER_ALL)
@@ -281,6 +288,7 @@ fn unix_datagram_socket_sending_receiving_with_single_fd_works() {
 fn unix_datagram_socket_sending_receiving_credentials_works() {
     test_requires!(POSIX_SUPPORT_UNIX_DATAGRAM_SOCKETS_ANCILLARY_DATA);
 
+    create_test_directory();
     let socket_name = generate_socket_name();
     let sut_receiver = UnixDatagramReceiverBuilder::new(&socket_name)
         .permission(Permission::OWNER_ALL)
@@ -313,6 +321,7 @@ fn unix_datagram_socket_sending_receiving_with_max_supported_fd_and_credentials_
 
     let mut test = TestFixture::new();
 
+    create_test_directory();
     let socket_name = generate_socket_name();
     let sut_receiver = UnixDatagramReceiverBuilder::new(&socket_name)
         .permission(Permission::OWNER_ALL)

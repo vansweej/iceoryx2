@@ -99,11 +99,22 @@ enum class EventOpenOrCreateError : uint8_t {
     /// a corrupted
     /// [`Service`]state.
     OpenServiceInCorruptedState,
+    /// The [`Service`]s deadline settings are not equal the the user given requirements.
+    OpenIncompatibleDeadline,
     /// The [`Service`] has the wrong messaging pattern.
     OpenIncompatibleMessagingPattern,
     /// The [`AttributeVerifier`] required attributes that the [`Service`] does
     /// not satisfy.
     OpenIncompatibleAttributes,
+    /// The event id that is emitted for a newly created [`Notifier`](crate::port::notifier::Notifier)
+    /// does not fit the required event id.
+    OpenIncompatibleNotifierCreatedEvent,
+    /// The event id that is emitted if a [`Notifier`](crate::port::notifier::Notifier) is dropped
+    /// does not fit the required event id.
+    OpenIncompatibleNotifierDroppedEvent,
+    /// The event id that is emitted if a [`Notifier`](crate::port::notifier::Notifier) is
+    /// identified as dead does not fit the required event id.
+    OpenIncompatibleNotifierDeadEvent,
     /// Errors that indicate either an implementation issue or a wrongly
     /// configured system.
     OpenInternalFailure,
@@ -156,7 +167,11 @@ enum class EventOpenOrCreateError : uint8_t {
     /// [`Sample`] or
     /// [`SampleMut`] in use.
     CreateOldConnectionsStillActive,
+    /// Can occur when another process creates and removes the same [`Service`] repeatedly with a
+    /// high frequency.
+    SystemInFlux,
 };
+
 } // namespace iox2
 
 #endif

@@ -15,7 +15,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
 //!     .publish_subscribe::<u64>()
@@ -31,21 +31,25 @@
 //! # }
 //! ```
 
-use std::cell::UnsafeCell;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use core::any::TypeId;
+use core::cell::UnsafeCell;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::sync::atomic::Ordering;
+
+extern crate alloc;
+use alloc::sync::Arc;
 
 use iceoryx2_bb_container::queue::Queue;
 use iceoryx2_bb_elementary::CallbackProgression;
 use iceoryx2_bb_lock_free::mpmc::container::{ContainerHandle, ContainerState};
 use iceoryx2_bb_log::{fail, warn};
 use iceoryx2_cal::dynamic_storage::DynamicStorage;
-use iceoryx2_cal::{shared_memory::*, zero_copy_connection::*};
+use iceoryx2_cal::zero_copy_connection::*;
 
 use crate::port::DegrationAction;
 use crate::sample::SampleDetails;
+use crate::service::builder::publish_subscribe::CustomPayloadMarker;
 use crate::service::dynamic_config::publish_subscribe::{PublisherDetails, SubscriberDetails};
 use crate::service::header::publish_subscribe::Header;
 use crate::service::port_factory::subscriber::SubscriberConfig;
@@ -70,13 +74,13 @@ pub enum SubscriberReceiveError {
     ConnectionFailure(ConnectionFailure),
 }
 
-impl std::fmt::Display for SubscriberReceiveError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for SubscriberReceiveError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "SubscriberReceiveError::{:?}", self)
     }
 }
 
-impl std::error::Error for SubscriberReceiveError {}
+impl core::error::Error for SubscriberReceiveError {}
 
 /// Describes the failures when a new [`Subscriber`] is created via the
 /// [`crate::service::port_factory::subscriber::PortFactorySubscriber`].
@@ -92,17 +96,21 @@ pub enum SubscriberCreateError {
     BufferSizeExceedsMaxSupportedBufferSizeOfService,
 }
 
-impl std::fmt::Display for SubscriberCreateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for SubscriberCreateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "SubscriberCreateError::{:?}", self)
     }
 }
 
-impl std::error::Error for SubscriberCreateError {}
+impl core::error::Error for SubscriberCreateError {}
 
 /// The receiving endpoint of a publish-subscribe communication.
 #[derive(Debug)]
-pub struct Subscriber<Service: service::Service, Payload: Debug + ?Sized, UserHeader: Debug> {
+pub struct Subscriber<
+    Service: service::Service,
+    Payload: Debug + ?Sized + 'static,
+    UserHeader: Debug,
+> {
     dynamic_subscriber_handle: Option<ContainerHandle>,
     publisher_connections: PublisherConnections<Service>,
     to_be_removed_connections: UnsafeCell<Queue<Arc<Connection<Service>>>>,
@@ -191,7 +199,7 @@ impl<Service: service::Service, Payload: Debug + ?Sized, UserHeader: Debug>
             warn!(from new_self, "The new subscriber is unable to connect to every publisher, caused by {:?}.", e);
         }
 
-        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
 
         // !MUST! be the last task otherwise a subscriber is added to the dynamic config without
         // the creation of all required channels
@@ -299,16 +307,25 @@ impl<Service: service::Service, Payload: Debug + ?Sized, UserHeader: Debug>
             Ok(data) => match data {
                 None => Ok(None),
                 Some(offset) => {
-                    let absolute_address =
-                        offset.value() + connection.data_segment.payload_start_address();
-
                     let details = SampleDetails {
                         publisher_connection: connection.clone(),
                         offset,
                         origin: connection.publisher_id,
                     };
 
-                    Ok(Some((details, absolute_address)))
+                    let offset = match connection
+                        .data_segment
+                        .register_and_translate_offset(offset)
+                    {
+                        Ok(offset) => offset,
+                        Err(e) => {
+                            fail!(from self, with SubscriberReceiveError::ConnectionFailure(ConnectionFailure::UnableToMapPublishersDataSegment(e)),
+                                "Unable to register and translate offset from publisher {:?} since the received offset {:?} could not be registered and translated.",
+                                connection.publisher_id, offset);
+                        }
+                    };
+
+                    Ok(Some((details, offset)))
                 }
             },
             Err(ZeroCopyReceiveError::ReceiveWouldExceedMaxBorrowValue) => {
@@ -443,13 +460,13 @@ impl<Service: service::Service, Payload: Debug, UserHeader: Debug>
     pub fn receive(
         &self,
     ) -> Result<Option<Sample<Service, [Payload], UserHeader>>, SubscriberReceiveError> {
+        debug_assert!(TypeId::of::<Payload>() != TypeId::of::<CustomPayloadMarker>());
+
         Ok(self.receive_impl()?.map(|(details, absolute_address)| {
             let header_ptr = absolute_address as *const Header;
             let user_header_ptr = self.user_header_ptr(header_ptr).cast();
             let payload_ptr = self.payload_ptr(header_ptr).cast();
-
-            let payload_layout = unsafe { (*header_ptr).payload_type_layout() };
-            let number_of_elements = payload_layout.size() / core::mem::size_of::<Payload>();
+            let number_of_elements = unsafe { (*header_ptr).number_of_elements() };
 
             Sample {
                 details,
@@ -457,7 +474,51 @@ impl<Service: service::Service, Payload: Debug, UserHeader: Debug>
                     RawSample::<Header, UserHeader, [Payload]>::new_slice_unchecked(
                         header_ptr,
                         user_header_ptr,
-                        core::slice::from_raw_parts(payload_ptr, number_of_elements),
+                        core::slice::from_raw_parts(payload_ptr, number_of_elements as _),
+                    )
+                },
+            }
+        }))
+    }
+}
+
+impl<Service: service::Service, UserHeader: Debug>
+    Subscriber<Service, [CustomPayloadMarker], UserHeader>
+{
+    /// # Safety
+    ///
+    ///  * The number_of_elements in the [`Header`](crate::service::header::publish_subscribe::Header)
+    ///     corresponds to the payload type details that where overridden in
+    ///     `MessageTypeDetails::payload.size`.
+    ///     If the `payload.size == 8` a value for number_of_elements of 5 means that there are
+    ///     5 elements of size 8 stored in the [`Sample`].
+    ///  *  When the payload.size == 8 and the number of elements if 5, it means that the sample
+    ///     will contain a slice of 8 * 5 = 40 [`CustomPayloadMarker`]s or 40 bytes.
+    #[doc(hidden)]
+    pub unsafe fn receive_custom_payload(
+        &self,
+    ) -> Result<Option<Sample<Service, [CustomPayloadMarker], UserHeader>>, SubscriberReceiveError>
+    {
+        Ok(self.receive_impl()?.map(|(details, absolute_address)| {
+            let header_ptr = absolute_address as *const Header;
+            let user_header_ptr = self.user_header_ptr(header_ptr).cast();
+            let payload_ptr = self.payload_ptr(header_ptr).cast();
+            let number_of_elements = unsafe { (*header_ptr).number_of_elements() };
+            let number_of_bytes = number_of_elements as usize
+                * self
+                    .static_config
+                    .publish_subscribe()
+                    .message_type_details
+                    .payload
+                    .size;
+
+            Sample {
+                details,
+                ptr: unsafe {
+                    RawSample::<Header, UserHeader, [CustomPayloadMarker]>::new_slice_unchecked(
+                        header_ptr,
+                        user_header_ptr,
+                        core::slice::from_raw_parts(payload_ptr, number_of_bytes),
                     )
                 },
             }

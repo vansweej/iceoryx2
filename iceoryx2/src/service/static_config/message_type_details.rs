@@ -10,14 +10,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use std::alloc::Layout;
+use core::alloc::Layout;
 
 use iceoryx2_bb_elementary::math::align;
 use serde::{Deserialize, Serialize};
 
 /// Defines if the type is a slice with a runtime-size ([`TypeVariant::Dynamic`])
 /// or if its a type that satisfies [`Sized`] ([`TypeVariant::FixedSize`]).
-#[derive(Default, Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum TypeVariant {
     #[default]
     /// A type notated by [`#[repr(C)]`](https://doc.rust-lang.org/reference/type-layout.html#reprc).
@@ -112,15 +112,6 @@ impl MessageTypeDetails {
                     self.header.alignment,
                 ),
                 self.header.alignment,
-            )
-        }
-    }
-
-    pub(crate) fn payload_layout(&self, number_of_elements: usize) -> Layout {
-        unsafe {
-            Layout::from_size_align_unchecked(
-                self.payload.size * number_of_elements,
-                self.payload.alignment,
             )
         }
     }
@@ -265,37 +256,6 @@ mod tests {
         let payload_ptr = details.payload_ptr_from_header(ptr) as *const i32;
         let sut = unsafe { *payload_ptr };
         assert_that!(sut, eq demo.payload);
-    }
-
-    #[test]
-    fn test_payload_layout() {
-        let details = MessageTypeDetails::from::<i64, i64, i64>(TypeVariant::FixedSize);
-        let sut = details.payload_layout(0);
-        assert_that!(sut.size(), eq 0);
-        let sut = details.payload_layout(5);
-        assert_that!(sut.size(), eq 40);
-
-        #[repr(C)]
-        struct Demo {
-            _b: bool,
-            _i16: i16,
-            _i64: i64,
-        }
-
-        let details = MessageTypeDetails::from::<i64, i64, Demo>(TypeVariant::FixedSize);
-        let sut = details.payload_layout(1);
-        #[cfg(target_pointer_width = "32")]
-        let expected = 12;
-        #[cfg(target_pointer_width = "64")]
-        let expected = 16;
-        assert_that!(sut.size(), eq expected);
-
-        #[cfg(target_pointer_width = "32")]
-        let expected = 36;
-        #[cfg(target_pointer_width = "64")]
-        let expected = 48;
-        let sut = details.payload_layout(3);
-        assert_that!(sut.size(), eq expected);
     }
 
     #[test]

@@ -15,6 +15,9 @@
 
 use crate::posix::types::*;
 
+pub const GLOBAL_CONFIG_PATH: &str = "/etc";
+pub const USER_CONFIG_PATH: &str = ".config";
+
 pub const CPU_SETSIZE: usize = 16;
 pub const MAX_NUMBER_OF_THREADS: usize = 1024;
 pub const FD_SETSIZE: usize = crate::internal::FD_SETSIZE as _;
@@ -55,8 +58,6 @@ pub const PTHREAD_BARRIER_SERIAL_THREAD: int = int::MAX;
 pub const PTHREAD_EXPLICIT_SCHED: int = crate::internal::PTHREAD_EXPLICIT_SCHED as _;
 pub const PTHREAD_INHERIT_SCHED: int = crate::internal::PTHREAD_INHERIT_SCHED as _;
 
-pub const MQ_INVALID: mqd_t = (usize::MAX) as mqd_t;
-pub const SIGPOLL: int = crate::internal::SIGIO as _;
 pub const MAX_SIGNAL_VALUE: usize = 34;
 
 pub const SO_PASSCRED: int = crate::internal::LOCAL_PEERCRED as _;
@@ -105,8 +106,6 @@ pub const PTHREAD_PROCESS_SHARED: int = crate::internal::PTHREAD_PROCESS_SHARED 
 pub const PTHREAD_PRIO_NONE: int = crate::internal::PTHREAD_PRIO_NONE as _;
 pub const PTHREAD_PRIO_INHERIT: int = crate::internal::PTHREAD_PRIO_INHERIT as _;
 pub const PTHREAD_PRIO_PROTECT: int = crate::internal::PTHREAD_PRIO_PROTECT as _;
-pub const PTHREAD_SCOPE_SYSTEM: int = crate::internal::PTHREAD_SCOPE_SYSTEM as _;
-pub const PTHREAD_SCOPE_PROCESS: int = crate::internal::PTHREAD_SCOPE_PROCESS as _;
 
 pub const RLIMIT_CPU: __rlim_t = 0;
 pub const RLIMIT_FSIZE: __rlim_t = 1;

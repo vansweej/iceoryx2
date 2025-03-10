@@ -12,49 +12,18 @@
 
 package(default_visibility = ["//visibility:public"])
 
-load("@bazel_skylib//lib:selects.bzl", "selects")
-load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test_suite")
 
 filegroup(
     name = "all_srcs",
     srcs = glob(["**"]),
 )
 
-string_flag(
-    name = "feature_dev_permissions",
-    build_setting_default = "auto",
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "dev_permissions_auto",
-    flag_values = {
-        ":feature_dev_permissions": "auto",
-    },
-)
-
-config_setting(
-    name = "dev_permissions_enabled",
-    flag_values = {
-        ":feature_dev_permissions": "on",
-    },
-)
-
-# NOTE: while this seems superfluous, it is the pattern for cases where *_auto is on by default;
-#       therefore this target is introduced to keep all feature flags consistent
-selects.config_setting_group(
-    name = "cfg_feature_dev_permissions",
-    match_any = [
-        ":dev_permissions_enabled",
-    ],
-)
-
 rust_library(
     name = "iceoryx2-cal",
     srcs = glob(["src/**/*.rs"]),
     crate_features = select({
-        "cfg_feature_dev_permissions": [
+        "//:cfg_feature_dev_permissions": [
             "dev_permissions"
         ],
         "//conditions:default": [],
@@ -69,9 +38,7 @@ rust_library(
         "//iceoryx2-bb/system-types:iceoryx2-bb-system-types",
         "//iceoryx2-pal/concurrency-sync:iceoryx2-pal-concurrency-sync",
         "@crate_index//:cdr",
-        "@crate_index//:lazy_static",
         "@crate_index//:once_cell",
-        "@crate_index//:ouroboros",
         "@crate_index//:serde",
         "@crate_index//:sha1_smol",
         "@crate_index//:tiny-fn",
@@ -79,4 +46,22 @@ rust_library(
     ],
 )
 
-# TODO: [349] add tests
+rust_test_suite(
+    name = "iceoryx2-cal-tests",
+    srcs = glob(["tests/**/*.rs"]),
+    deps = [
+        ":iceoryx2-cal",
+        "//iceoryx2-bb/container:iceoryx2-bb-container",
+        "//iceoryx2-bb/elementary:iceoryx2-bb-elementary",
+        "//iceoryx2-bb/lock-free:iceoryx2-bb-lock-free",
+        "//iceoryx2-bb/memory:iceoryx2-bb-memory",
+        "//iceoryx2-bb/posix:iceoryx2-bb-posix",
+        "//iceoryx2-bb/system-types:iceoryx2-bb-system-types",
+        "//iceoryx2-bb/testing:iceoryx2-bb-testing",
+        "@crate_index//:lazy_static",
+        "@crate_index//:serde",
+    ],
+    proc_macro_deps = [
+        "@crate_index//:generic-tests",
+    ],
+)

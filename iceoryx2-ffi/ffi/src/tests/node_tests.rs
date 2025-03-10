@@ -14,6 +14,7 @@
 mod node {
     use crate::tests::*;
 
+    use core::ffi::c_char;
     use core::{slice, str};
 
     #[test]
@@ -21,7 +22,7 @@ mod node {
         unsafe {
             let node_handle = create_node::<S>("");
 
-            assert_that!(node_handle, ne(std::ptr::null_mut()));
+            assert_that!(node_handle, ne(core::ptr::null_mut()));
 
             iox2_node_drop(node_handle);
         }
@@ -75,6 +76,7 @@ mod node {
     extern "C" fn node_list_callback(
         node_state: iox2_node_state_e,
         _node_id_ptr: iox2_node_id_ptr,
+        _executable: *const c_char,
         _node_name_ptr: iox2_node_name_ptr,
         _config_ptr: iox2_config_ptr,
         ctx: iox2_callback_context,

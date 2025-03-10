@@ -20,11 +20,16 @@ pub mod event;
 /// Builder for [`MessagingPattern::PublishSubscribe`](crate::service::messaging_pattern::MessagingPattern::PublishSubscribe)
 pub mod publish_subscribe;
 
+/// Builder for [`MessagingPattern::RequestResponse`](crate::service::messaging_pattern::MessagingPattern::RequestResponse)
+pub mod request_response;
+
 use crate::node::SharedNode;
 use crate::service;
 use crate::service::dynamic_config::DynamicConfig;
 use crate::service::dynamic_config::RegisterNodeResult;
 use crate::service::static_config::*;
+use core::fmt::Debug;
+use core::marker::PhantomData;
 use iceoryx2_bb_elementary::enum_gen;
 use iceoryx2_bb_log::fail;
 use iceoryx2_bb_log::fatal_panic;
@@ -37,15 +42,17 @@ use iceoryx2_cal::named_concept::NamedConceptDoesExistError;
 use iceoryx2_cal::named_concept::NamedConceptMgmt;
 use iceoryx2_cal::serialize::Serialize;
 use iceoryx2_cal::static_storage::*;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::sync::Arc;
+
+extern crate alloc;
+use alloc::sync::Arc;
 
 use super::config_scheme::dynamic_config_storage_config;
 use super::config_scheme::service_tag_config;
 use super::config_scheme::static_config_storage_config;
 use super::service_name::ServiceName;
 use super::Service;
+
+const RETRY_LIMIT: usize = 5;
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 enum ServiceState {
@@ -65,13 +72,13 @@ enum_gen! {
     DynamicStorageOpenError
 }
 
-impl std::fmt::Display for OpenDynamicStorageFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for OpenDynamicStorageFailure {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "OpenDynamicStorageFailure::{:?}", self)
     }
 }
 
-impl std::error::Error for OpenDynamicStorageFailure {}
+impl core::error::Error for OpenDynamicStorageFailure {}
 
 enum_gen! {
 #[doc(hidden)]
@@ -81,13 +88,13 @@ enum_gen! {
     StaticStorageReadError
 }
 
-impl std::fmt::Display for ReadStaticStorageFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ReadStaticStorageFailure {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "ReadStaticStorageFailure::{:?}", self)
     }
 }
 
-impl std::error::Error for ReadStaticStorageFailure {}
+impl core::error::Error for ReadStaticStorageFailure {}
 
 /// Builder to create or open [`Service`]s
 ///
@@ -108,6 +115,21 @@ impl<S: Service> Builder<S> {
             shared_node,
             _phantom_s: PhantomData,
         }
+    }
+
+    /// Create a new builder to create a
+    /// [`MessagingPattern::RequestResponse`](crate::service::messaging_pattern::MessagingPattern::RequestResponse) [`Service`].
+    pub fn request_response<RequestPayload: Debug, ResponsePayload: Debug>(
+        self,
+    ) -> request_response::Builder<RequestPayload, (), ResponsePayload, (), S> {
+        BuilderWithServiceType::new(
+            StaticConfig::new_request_response::<S::ServiceNameHasher>(
+                &self.name,
+                self.shared_node.config(),
+            ),
+            self.shared_node,
+        )
+        .request_response::<RequestPayload, ResponsePayload>()
     }
 
     /// Create a new builder to create a
@@ -151,6 +173,12 @@ impl<ServiceType: service::Service> BuilderWithServiceType<ServiceType> {
             shared_node,
             _phantom_data: PhantomData,
         }
+    }
+
+    fn request_response<RequestPayload: Debug, ResponsePayload: Debug>(
+        self,
+    ) -> request_response::Builder<RequestPayload, (), ResponsePayload, (), ServiceType> {
+        request_response::Builder::new(self)
     }
 
     fn publish_subscribe<PayloadType: Debug + ?Sized>(

@@ -54,6 +54,7 @@
 //! ```
 
 pub use crate::mpmc::unique_index_set::ReleaseMode;
+use iceoryx2_bb_elementary::bump_allocator::BumpAllocator;
 pub use iceoryx2_bb_elementary::CallbackProgression;
 
 use iceoryx2_bb_elementary::allocator::AllocationError;
@@ -67,9 +68,9 @@ use iceoryx2_bb_log::{fail, fatal_panic};
 use iceoryx2_pal_concurrency_sync::iox_atomic::{IoxAtomicBool, IoxAtomicU64};
 
 use crate::mpmc::unique_index_set::*;
-use std::alloc::Layout;
-use std::fmt::Debug;
-use std::{cell::UnsafeCell, mem::MaybeUninit, sync::atomic::Ordering};
+use core::alloc::Layout;
+use core::fmt::Debug;
+use core::{cell::UnsafeCell, mem::MaybeUninit, sync::atomic::Ordering};
 
 /// States the reason why an element could not be added to the [`Container`]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,7 +171,7 @@ pub struct Container<T: Copy + Debug> {
     data_ptr: RelocatablePointer<UnsafeCell<MaybeUninit<T>>>,
     capacity: usize,
     change_counter: IoxAtomicU64,
-    is_memory_initialized: IoxAtomicBool,
+    is_initialized: IoxAtomicBool,
     container_id: UniqueId,
     // must be the last member, since it is a relocatable container as well and then the offset
     // calculations would again fail
@@ -183,25 +184,26 @@ unsafe impl<T: Copy + Debug> Sync for Container<T> {}
 impl<T: Copy + Debug> RelocatableContainer for Container<T> {
     unsafe fn new_uninit(capacity: usize) -> Self {
         let distance_to_active_index =
-            (std::mem::size_of::<Self>() + UniqueIndexSet::memory_size(capacity)) as isize;
+            (core::mem::size_of::<Self>() + UniqueIndexSet::memory_size(capacity)) as isize;
         Self {
             container_id: UniqueId::new(),
             active_index_ptr: RelocatablePointer::new(distance_to_active_index),
             data_ptr: RelocatablePointer::new(align_to::<MaybeUninit<T>>(
-                distance_to_active_index as usize + capacity * std::mem::size_of::<IoxAtomicBool>(),
+                distance_to_active_index as usize
+                    + capacity * core::mem::size_of::<IoxAtomicBool>(),
             ) as isize),
             capacity,
             change_counter: IoxAtomicU64::new(0),
             index_set: UniqueIndexSet::new_uninit(capacity),
-            is_memory_initialized: IoxAtomicBool::new(false),
+            is_initialized: IoxAtomicBool::new(false),
         }
     }
 
     unsafe fn init<Allocator: BaseAllocator>(
-        &self,
+        &mut self,
         allocator: &Allocator,
     ) -> Result<(), AllocationError> {
-        if self.is_memory_initialized.load(Ordering::Relaxed) {
+        if self.is_initialized.load(Ordering::Relaxed) {
             fatal_panic!(from self, "Memory already initialized. Initializing it twice may lead to undefined behavior.");
         }
         let msg = "Unable to initialize";
@@ -210,13 +212,13 @@ impl<T: Copy + Debug> RelocatableContainer for Container<T> {
             "{} since the underlying UniqueIndexSet could not be initialized", msg);
 
         self.active_index_ptr.init(fail!(from self, when allocator.allocate(Layout::from_size_align_unchecked(
-                        std::mem::size_of::<IoxAtomicU64>() * self.capacity,
-                        std::mem::align_of::<IoxAtomicU64>())), "{} since the allocation of the active index memory failed.",
+                        core::mem::size_of::<IoxAtomicU64>() * self.capacity,
+                        core::mem::align_of::<IoxAtomicU64>())), "{} since the allocation of the active index memory failed.",
                 msg));
         self.data_ptr.init(
             fail!(from self, when allocator.allocate(Layout::from_size_align_unchecked(
-                    std::mem::size_of::<T>() * self.capacity,
-                    std::mem::align_of::<T>())),
+                    core::mem::size_of::<T>() * self.capacity,
+                    core::mem::align_of::<T>())),
                 "{} since the allocation of the data memory failed.", msg
             ),
         );
@@ -229,33 +231,9 @@ impl<T: Copy + Debug> RelocatableContainer for Container<T> {
                 .add(i)
                 .write(UnsafeCell::new(MaybeUninit::uninit()));
         }
-        self.is_memory_initialized.store(true, Ordering::Relaxed);
+        self.is_initialized.store(true, Ordering::Relaxed);
 
         Ok(())
-    }
-
-    unsafe fn new(capacity: usize, distance_to_data: isize) -> Self {
-        let unique_index_set_distance = distance_to_data
-            - align_to::<u32>(std::mem::size_of::<Container<T>>()) as isize
-            + align_to::<u32>(std::mem::size_of::<UniqueIndexSet>()) as isize;
-
-        let distance_to_active_index = align_to::<IoxAtomicU64>(
-            distance_to_data as usize + (std::mem::size_of::<u32>() * (capacity + 1)),
-        ) as isize;
-        let distance_to_container_data = align_to::<UnsafeCell<MaybeUninit<T>>>(
-            distance_to_active_index as usize + (std::mem::size_of::<IoxAtomicU64>() * capacity),
-        ) as isize
-            - std::mem::size_of::<RelocatablePointer<IoxAtomicU64>>() as isize;
-
-        Self {
-            container_id: UniqueId::new(),
-            active_index_ptr: RelocatablePointer::new(distance_to_active_index),
-            data_ptr: RelocatablePointer::new(distance_to_container_data),
-            capacity,
-            change_counter: IoxAtomicU64::new(0),
-            index_set: UniqueIndexSet::new(capacity, unique_index_set_distance),
-            is_memory_initialized: IoxAtomicBool::new(true),
-        }
     }
 
     fn memory_size(capacity: usize) -> usize {
@@ -265,9 +243,10 @@ impl<T: Copy + Debug> RelocatableContainer for Container<T> {
 
 impl<T: Copy + Debug> Container<T> {
     #[inline(always)]
-    fn verify_memory_initialization(&self, source: &str) {
-        debug_assert!(self.is_memory_initialized.load(Ordering::Relaxed),
-            "Undefined behavior when calling \"{}\" and the object is not initialized with 'initialize_memory'.", source);
+    fn verify_init(&self, source: &str) {
+        debug_assert!(self.is_initialized.load(Ordering::Relaxed),
+            "Undefined behavior when calling Container<{}>::{} and the object is not initialized with 'init'.",
+            core::any::type_name::<T>(), source);
     }
 
     /// Returns the required memory size of the data segment of the [`Container`].
@@ -305,13 +284,12 @@ impl<T: Copy + Debug> Container<T> {
     ///
     /// # Safety
     ///
-    ///  * Ensure that the either [`Container::new()`] was used or [`Container::init()`] was used
-    ///     before calling this method
+    ///  * Ensure that [`Container::init()`] was called before calling this method
     ///  * Use [`Container::remove()`] to release the acquired index again. Otherwise, the
     ///     element will leak.
     ///
     pub unsafe fn add(&self, value: T) -> Result<ContainerHandle, ContainerAddFailure> {
-        self.verify_memory_initialization("add");
+        self.verify_init("add()");
 
         let index = self.index_set.acquire_raw_index()?;
         core::ptr::copy_nonoverlapping(
@@ -337,8 +315,7 @@ impl<T: Copy + Debug> Container<T> {
     ///
     /// # Safety
     ///
-    ///  * Ensure that the either [`Container::new()`] was used or [`Container::init()`] was used
-    ///     before calling this method
+    ///  * Ensure that [`Container::init()`] was called before calling this method
     ///  * Ensure that no one else possesses the [`UniqueIndex`] and the index was unrecoverable
     ///     lost
     ///  * Ensure that the `handle` was acquired by the same [`Container`]
@@ -348,7 +325,7 @@ impl<T: Copy + Debug> Container<T> {
     /// which was allocated afterwards
     ///
     pub unsafe fn remove(&self, handle: ContainerHandle, mode: ReleaseMode) -> ReleaseState {
-        self.verify_memory_initialization("remove_with_handle");
+        self.verify_init("remove()");
         debug_assert!(
             handle.container_id == self.container_id.value(),
             "The ContainerHandle used as handle was not created by this Container instance."
@@ -368,11 +345,10 @@ impl<T: Copy + Debug> Container<T> {
     ///
     /// # Safety
     ///
-    ///  * Ensure that the either [`Container::new()`] was used or [`Container::init()`] was used
-    ///     before calling this method
+    ///  * Ensure that [`Container::init()`] was called before calling this method
     ///
     pub unsafe fn get_state(&self) -> ContainerState<T> {
-        self.verify_memory_initialization("get_state");
+        self.verify_init("get_state()");
 
         let mut state = ContainerState::new(self.container_id.value(), self.capacity);
         self.update_state(&mut state);
@@ -384,8 +360,7 @@ impl<T: Copy + Debug> Container<T> {
     ///
     /// # Safety
     ///
-    ///  * Ensure that the either [`Container::new()`] was used or [`Container::init()`] was used
-    ///     before calling this method
+    ///  * Ensure that [`Container::init()`] was called before calling this method
     ///  * Ensure that the input argument `previous_state` was acquired by the same [`Container`]
     ///     with [`Container::get_state()`], otherwise the method will panic.
     ///
@@ -472,18 +447,23 @@ pub struct FixedSizeContainer<T: Copy + Debug, const CAPACITY: usize> {
 
 impl<T: Copy + Debug, const CAPACITY: usize> Default for FixedSizeContainer<T, CAPACITY> {
     fn default() -> Self {
-        Self {
-            container: unsafe {
-                Container::new(
-                    CAPACITY,
-                    align_to::<u32>(std::mem::size_of::<Container<T>>()) as isize,
-                )
-            },
+        let mut new_self = Self {
+            container: unsafe { Container::new_uninit(CAPACITY) },
             next_free_index: core::array::from_fn(|i| UnsafeCell::new(i as u32 + 1)),
             next_free_index_plus_one: UnsafeCell::new(CAPACITY as u32 + 1),
             active_index: core::array::from_fn(|_| IoxAtomicU64::new(0)),
             data: core::array::from_fn(|_| UnsafeCell::new(MaybeUninit::uninit())),
-        }
+        };
+
+        let allocator = BumpAllocator::new(core::ptr::addr_of!(new_self.next_free_index) as usize);
+        unsafe {
+            new_self
+                .container
+                .init(&allocator)
+                .expect("All required memory is preallocated.")
+        };
+
+        new_self
     }
 }
 

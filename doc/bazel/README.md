@@ -8,16 +8,37 @@ To use iceoryx2 as an external dependency, ensure the following setup is present
 in your `WORKSPACE` file:
 
 ```bazel
-ICEORYX2_VERSION = "branch-tag-or-commit-hash"
+# Load iceoryx2 rules
+ICEORYX2_VERSION = "0248ea57d0c405383ab099e14293ed8be2d23dac"
 
 http_archive(
     name = "iceoryx2",
-    sha256 = "add-the-correct-sha256-sum",
+    sha256 = "8844b229d2ba23597dfe17df7a3baabd086a62944534aa804d482a6e46bdf5b8",
     strip_prefix = "iceoryx2-{}".format(ICEORYX2_VERSION),
     urls = [
         "https://github.com/eclipse-iceoryx/iceoryx2/archive/{}.tar.gz".format(ICEORYX2_VERSION),
     ],
 )
+
+
+# Load iceoryx rules
+ICEORYX_VERSION = "2.95.4"
+
+maybe(
+    name = "iceoryx",
+    repo_rule = http_archive,
+    sha256 = "82c4fe7507d1609e1275a04a3fe8278ae20620aa30e1eede63f96a9c23308ab6",
+    strip_prefix = "iceoryx-{}".format(ICEORYX_VERSION),
+    url = "https://github.com/eclipse-iceoryx/iceoryx/archive/v{}.tar.gz".format(ICEORYX_VERSION),
+)
+
+load("@iceoryx//bazel:load_repositories.bzl", "load_repositories")
+
+load_repositories()
+
+load("@iceoryx//bazel:setup_repositories.bzl", "setup_repositories")
+
+setup_repositories()
 
 
 # Load Rust rules
@@ -81,6 +102,7 @@ maybe(
         "@iceoryx2//:Cargo.toml",
         "@iceoryx2//:benchmarks/event/Cargo.toml",
         "@iceoryx2//:benchmarks/publish-subscribe/Cargo.toml",
+        "@iceoryx2//:benchmarks/queue/Cargo.toml",
         "@iceoryx2//:examples/Cargo.toml",
         "@iceoryx2//:iceoryx2/Cargo.toml",
         "@iceoryx2//:iceoryx2-bb/container/Cargo.toml",
@@ -107,6 +129,25 @@ maybe(
 load("@crate_index//:defs.bzl", "crate_repositories")
 
 crate_repositories()
+
+
+# Load skylib rules
+BAZEL_SKYLIB_VERSION = "1.7.1"
+
+# Load skylib for custom build config
+maybe(
+    name = "bazel_skylib",
+    repo_rule = http_archive,
+    sha256 = "bc283cdfcd526a52c3201279cda4bc298652efa898b10b4db0837dc51652756f",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/{version}/bazel-skylib-{version}.tar.gz".format(version = BAZEL_SKYLIB_VERSION),
+        "https://github.com/bazelbuild/bazel-skylib/releases/download/{version}/bazel-skylib-{version}.tar.gz".format(version = BAZEL_SKYLIB_VERSION),
+    ],
+)
+
+load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
+
+bazel_skylib_workspace()
 ```
 
 ### Syncing Dependencies
@@ -201,6 +242,63 @@ build --@iceoryx2//:foo=on
 | Feature Flag            | Valid Values                 | Crate Default      |
 | ----------------------- | ---------------------------- | ------------------ |
 | dev_permissions         | auto, on, off                | auto == off        |
+| logger_log              | auto, on, off                | auto == off        |
+| logger_tracing          | auto, on, off                | auto == off        |
+
+### Running iceory2x Tests in External Project
+
+In general, the iceoryx2 tests can be run in parallel. However, there are
+exceptions, as some tests deliberately try to bring the system into an
+inconsistent state. When these tests are executed in parallel, they can become
+flaky and may fail depending on which other tests are running concurrently.
+
+To mitigate this, it is sufficient to prevent other tests from the same file
+from running in parallel. This can be achieved by setting the following
+environment variable in your .bashrc:
+
+```bazel
+test --action_env=RUST_TEST_THREADS=1
+```
+
+Assuming there are two test binaries, without the environment variable, all
+tests would be executed in parallel, as illustrated below:
+
+```ascii
+bazel test /...
+   |
+   +--------------------+
+   |                    |
+  test-binary-A        test-binary-B
+   |                    |
+   +----------+         +----------+
+   |          |         |          |
+  test-A-1   test-A2   test-B-1   test-B2
+   |          |         |          |
+   +----------+         +----------+
+   |                    |
+   +--------------------+
+   |
+  test result
+```
+
+With the environment variable set, the test execution is partially serialized,
+as shown below:
+
+```ascii
+bazel test /...
+   |
+   +--------------------+
+   |                    |
+  test-binary-A        test-binary-B
+   |                    |
+  test-A-1             test-B-1
+   |                    |
+  test-A-2             test-B-2
+   |                    |
+   +--------------------+
+   |
+  test result
+```
 
 ## Instructions for iceoryx2 Developers
 
@@ -217,15 +315,6 @@ within the `BUILD.bazel` file.
 file, it must also be included in the `crate_index` target located in the
 `WORKSPACE.bazel` file.
 
-### Updating Dependencies
-
-Any time a dependency is added or changed, the `Cargo.Bazel.lock` file must be
-updated by running:
-
-```bash
-CARGO_BAZEL_REPIN=1 bazel build //...
-```
-
 ### Common Pitfalls
 
 1. **Handling `iceoryx2-ffi-cbindgen` Target**:
@@ -240,3 +329,10 @@ Every `BUILD.bazel` file includes an `all_srcs` filegroup to manage the source f
 within the sandbox. The root `BUILD.bazel` file has an `all_srcs` filegroup that
 references all sub-packages. When a new package is added, it must also be included
 in this `all_srcs` filegroup.
+
+1. **Not All Environment Variables are Available with Bazel**
+
+`bazel` does not automatically export some environment variables that are
+typically available with `cargo`, such as `CARGO_PKG_VERSION`. In these cases,
+you will need to either set the environment variable manually in your `bazel`
+configuration or find an appropriate workaround.

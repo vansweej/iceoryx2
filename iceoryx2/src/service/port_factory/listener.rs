@@ -15,7 +15,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let event = node.service_builder(&"MyEventName".try_into()?)
 //!     .event()
@@ -25,7 +25,7 @@
 //! # Ok(())
 //! # }
 //! ```
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use iceoryx2_bb_log::fail;
 
@@ -42,7 +42,7 @@ pub struct PortFactoryListener<'factory, Service: service::Service> {
     pub(crate) factory: &'factory PortFactory<Service>,
 }
 
-impl<'factory, Service: service::Service> PortFactoryListener<'factory, Service> {
+impl<Service: service::Service> PortFactoryListener<'_, Service> {
     /// Creates the [`Listener`] port or returns a [`ListenerCreateError`] on failure.
     pub fn create(self) -> Result<Listener<Service>, ListenerCreateError> {
         Ok(fail!(from self, when Listener::new(&self.factory.service),

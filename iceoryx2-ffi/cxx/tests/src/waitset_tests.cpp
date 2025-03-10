@@ -10,14 +10,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-#include <vector>
-
 #include "iox2/node.hpp"
 #include "iox2/service_name.hpp"
 #include "iox2/service_type.hpp"
 #include "iox2/waitset.hpp"
 #include "test.hpp"
 
+#include <chrono>
+#include <vector>
 
 namespace {
 using namespace iox2;
@@ -58,7 +58,7 @@ struct WaitSetTest : public ::testing::Test {
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
-TYPED_TEST_SUITE(WaitSetTest, iox2_testing::ServiceTypes);
+TYPED_TEST_SUITE(WaitSetTest, iox2_testing::ServiceTypes, );
 
 TYPED_TEST(WaitSetTest, newly_created_waitset_is_empty) {
     auto sut = this->create_sut();
@@ -132,7 +132,7 @@ TYPED_TEST(WaitSetTest, attaching_same_notification_twice_fails) {
 
 TYPED_TEST(WaitSetTest, empty_waitset_returns_error_on_run) {
     auto sut = this->create_sut();
-    auto result = sut.wait_and_process([](auto) {});
+    auto result = sut.wait_and_process([](auto) { return CallbackProgression::Continue; });
 
     ASSERT_THAT(result.has_error(), Eq(true));
     ASSERT_THAT(result.get_error(), Eq(WaitSetRunError::NoAttachments));
@@ -140,7 +140,7 @@ TYPED_TEST(WaitSetTest, empty_waitset_returns_error_on_run) {
 
 TYPED_TEST(WaitSetTest, empty_waitset_returns_error_on_run_once) {
     auto sut = this->create_sut();
-    auto result = sut.try_wait_and_process([](auto) {});
+    auto result = sut.wait_and_process_once([](auto) { return CallbackProgression::Continue; });
 
     ASSERT_THAT(result.has_error(), Eq(true));
     ASSERT_THAT(result.get_error(), Eq(WaitSetRunError::NoAttachments));
@@ -153,11 +153,11 @@ TYPED_TEST(WaitSetTest, interval_attachment_blocks_for_at_least_timeout) {
     auto guard = sut.attach_interval(TIMEOUT).expect("");
 
     auto callback_called = false;
-    auto result = sut.wait_and_process([&](auto attachment_id) {
+    auto result = sut.wait_and_process([&](auto attachment_id) -> CallbackProgression {
         callback_called = true;
-        sut.stop();
-        ASSERT_THAT(attachment_id.has_event_from(guard), Eq(true));
-        ASSERT_THAT(attachment_id.has_missed_deadline(guard), Eq(false));
+        EXPECT_THAT(attachment_id.has_event_from(guard), Eq(true));
+        EXPECT_THAT(attachment_id.has_missed_deadline(guard), Eq(false));
+        return CallbackProgression::Stop;
     });
 
     auto end = std::chrono::steady_clock::now();
@@ -175,11 +175,11 @@ TYPED_TEST(WaitSetTest, deadline_attachment_blocks_for_at_least_timeout) {
     auto guard = sut.attach_deadline(listener, TIMEOUT).expect("");
 
     auto callback_called = false;
-    auto result = sut.wait_and_process([&](auto attachment_id) {
+    auto result = sut.wait_and_process([&](auto attachment_id) -> CallbackProgression {
         callback_called = true;
-        sut.stop();
-        ASSERT_THAT(attachment_id.has_event_from(guard), Eq(false));
-        ASSERT_THAT(attachment_id.has_missed_deadline(guard), Eq(true));
+        EXPECT_THAT(attachment_id.has_event_from(guard), Eq(false));
+        EXPECT_THAT(attachment_id.has_missed_deadline(guard), Eq(true));
+        return CallbackProgression::Stop;
     });
 
     auto end = std::chrono::steady_clock::now();
@@ -188,6 +188,47 @@ TYPED_TEST(WaitSetTest, deadline_attachment_blocks_for_at_least_timeout) {
     ASSERT_THAT(callback_called, Eq(true));
     ASSERT_THAT(elapsed, Ge(TIMEOUT.toMilliseconds()));
 }
+
+TYPED_TEST(WaitSetTest, does_not_block_longer_than_provided_timeout) {
+    auto sut = this->create_sut();
+
+    auto begin = std::chrono::steady_clock::now();
+    auto guard = sut.attach_interval(Duration::max()).expect("");
+
+    auto callback_called = false;
+    auto result = sut.wait_and_process_once_with_timeout(
+        [&](auto) -> CallbackProgression {
+            callback_called = true;
+            return CallbackProgression::Stop;
+        },
+        TIMEOUT);
+
+    auto end = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+
+    ASSERT_THAT(callback_called, Eq(false));
+    ASSERT_THAT(elapsed, Ge(TIMEOUT.toMilliseconds()));
+}
+
+TYPED_TEST(WaitSetTest, blocks_until_interval_when_user_timeout_is_larger) {
+    auto sut = this->create_sut();
+
+    auto begin = std::chrono::steady_clock::now();
+    auto guard = sut.attach_interval(TIMEOUT).expect("");
+
+    auto callback_called = false;
+    auto result = sut.wait_and_process_once([&](auto) -> CallbackProgression {
+        callback_called = true;
+        return CallbackProgression::Stop;
+    });
+
+    auto end = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+
+    ASSERT_THAT(callback_called, Eq(true));
+    ASSERT_THAT(elapsed, Ge(TIMEOUT.toMilliseconds()));
+}
+
 
 TYPED_TEST(WaitSetTest, deadline_attachment_wakes_up_when_notified) {
     auto sut = this->create_sut();
@@ -201,11 +242,11 @@ TYPED_TEST(WaitSetTest, deadline_attachment_wakes_up_when_notified) {
         auto notifier = this->create_notifier();
         notifier.notify().expect("");
     });
-    auto result = sut.wait_and_process([&](auto attachment_id) {
+    auto result = sut.wait_and_process([&](auto attachment_id) -> CallbackProgression {
         callback_called = true;
-        sut.stop();
-        ASSERT_THAT(attachment_id.has_event_from(guard), Eq(true));
-        ASSERT_THAT(attachment_id.has_missed_deadline(guard), Eq(false));
+        EXPECT_THAT(attachment_id.has_event_from(guard), Eq(true));
+        EXPECT_THAT(attachment_id.has_missed_deadline(guard), Eq(false));
+        return CallbackProgression::Stop;
     });
 
     notifier_thread.join();
@@ -224,11 +265,11 @@ TYPED_TEST(WaitSetTest, notification_attachment_wakes_up_when_notified) {
         auto notifier = this->create_notifier();
         notifier.notify().expect("");
     });
-    auto result = sut.wait_and_process([&](auto attachment_id) {
+    auto result = sut.wait_and_process([&](auto attachment_id) -> CallbackProgression {
         callback_called = true;
-        sut.stop();
-        ASSERT_THAT(attachment_id.has_event_from(guard), Eq(true));
-        ASSERT_THAT(attachment_id.has_missed_deadline(guard), Eq(false));
+        EXPECT_THAT(attachment_id.has_event_from(guard), Eq(true));
+        EXPECT_THAT(attachment_id.has_missed_deadline(guard), Eq(false));
+        return CallbackProgression::Stop;
     });
 
     notifier_thread.join();
@@ -243,6 +284,8 @@ TYPED_TEST(WaitSetTest, triggering_everything_works) {
 
     std::vector<Listener<TestFixture::TYPE>> listeners;
     std::vector<WaitSetGuard<TestFixture::TYPE>> guards;
+    guards.reserve(NUMBER_OF_INTERVALS + NUMBER_OF_NOTIFICATIONS + NUMBER_OF_DEADLINES);
+    listeners.reserve(NUMBER_OF_NOTIFICATIONS + NUMBER_OF_DEADLINES);
 
     for (uint64_t idx = 0; idx < NUMBER_OF_INTERVALS; ++idx) {
         guards.emplace_back(sut.attach_interval(Duration::fromNanoseconds(1)).expect(""));
@@ -266,18 +309,34 @@ TYPED_TEST(WaitSetTest, triggering_everything_works) {
     std::this_thread::sleep_for(std::chrono::milliseconds(TIMEOUT.toMilliseconds()));
     std::vector<bool> was_triggered(guards.size(), false);
 
-    sut.try_wait_and_process([&](auto attachment_id) {
-           for (uint64_t idx = 0; idx < guards.size(); ++idx) {
-               if (attachment_id.has_event_from(guards[idx])) {
-                   was_triggered[idx] = true;
-                   break;
-               }
-           }
-       })
-        .expect("");
+    auto result = sut.wait_and_process_once([&](auto attachment_id) -> CallbackProgression {
+        for (uint64_t idx = 0; idx < guards.size(); ++idx) {
+            if (attachment_id.has_event_from(guards[idx])) {
+                was_triggered[idx] = true;
+                break;
+            }
+        }
+
+        return CallbackProgression::Continue;
+    });
+
+    ASSERT_THAT(result.has_error(), Eq(false));
 
     for (auto triggered : was_triggered) {
         ASSERT_THAT(triggered, Eq(true));
     }
+}
+
+TYPED_TEST(WaitSetTest, signal_handling_mode_can_be_set) {
+    constexpr ServiceType SERVICE_TYPE = TestFixture::TYPE;
+
+    auto sut_1 = WaitSetBuilder().signal_handling_mode(SignalHandlingMode::Disabled).create<SERVICE_TYPE>().expect("");
+    auto sut_2 = WaitSetBuilder()
+                     .signal_handling_mode(SignalHandlingMode::HandleTerminationRequests)
+                     .create<SERVICE_TYPE>()
+                     .expect("");
+
+    ASSERT_THAT(sut_1.signal_handling_mode(), Eq(SignalHandlingMode::Disabled));
+    ASSERT_THAT(sut_2.signal_handling_mode(), Eq(SignalHandlingMode::HandleTerminationRequests));
 }
 } // namespace

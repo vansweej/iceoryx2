@@ -20,7 +20,7 @@
 //! use iceoryx2::prelude::*;
 //! use iceoryx2::config::Config;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //!
 //! let service_creator = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -44,7 +44,7 @@
 //! use iceoryx2::prelude::*;
 //! use iceoryx2::config::Config;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //!
 //! let service_open = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -69,7 +69,7 @@
 //! use iceoryx2::prelude::*;
 //! use iceoryx2::config::Config;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
 //!     .publish_subscribe::<u64>()
@@ -88,7 +88,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let services = ipc::Service::list(Config::global_config(), |service| {
 //!     println!("\n{:#?}", &service.static_details.attributes());
 //!     CallbackProgression::Continue
@@ -97,8 +97,9 @@
 //! # }
 //! ```
 
+use core::ops::Deref;
+use iceoryx2_bb_elementary::CallbackProgression;
 use serde::{Deserialize, Serialize};
-use std::ops::Deref;
 
 /// Represents a single service attribute (key-value) pair that can be defined when the service
 /// is being created.
@@ -198,8 +199,8 @@ impl AttributeVerifier {
         let is_subset = |lhs: Vec<&str>, rhs: Vec<&str>| lhs.iter().all(|v| rhs.contains(v));
 
         for attribute in self.attributes().iter() {
-            let lhs_values = self.attribute_set.get(&attribute.key);
-            let rhs_values = rhs.get(&attribute.key);
+            let lhs_values = self.attribute_set.get_vec(&attribute.key);
+            let rhs_values = rhs.get_vec(&attribute.key);
 
             if !is_subset(lhs_values, rhs_values) {
                 return Err(&attribute.key);
@@ -207,7 +208,7 @@ impl AttributeVerifier {
         }
 
         for key in self.keys() {
-            if rhs.get(key).is_empty() {
+            if rhs.get_vec(key).is_empty() {
                 return Err(key);
             }
         }
@@ -241,12 +242,49 @@ impl AttributeSet {
         self.0.sort();
     }
 
-    /// Returns all values to a specific key
-    pub fn get(&self, key: &str) -> Vec<&str> {
+    fn get_vec(&self, key: &str) -> Vec<&str> {
         self.0
             .iter()
             .filter(|p| p.key == key)
             .map(|p| p.value.as_str())
             .collect()
+    }
+
+    /// Returns the number of values stored under a specific key. If the key does not exist it
+    /// returns 0.
+    pub fn get_key_value_len(&self, key: &str) -> usize {
+        self.get_vec(key).len()
+    }
+
+    /// Returns a value of a key at a specific index. The index enumerates the values of the key
+    /// if the key has multiple values. The values are always stored at the same position during
+    /// the lifetime of the service but they can change when the process is recreated by another
+    /// process when the system restarts.
+    /// If the key does not exist or it does not have a value at the specified index, it returns
+    /// [`None`].
+    pub fn get_key_value_at(&self, key: &str, idx: usize) -> Option<&str> {
+        let v = self.get_vec(key);
+        if v.len() <= idx {
+            return None;
+        }
+
+        Some(self.get_vec(key)[idx])
+    }
+
+    /// Returns all values to a specific key
+    pub fn get_key_values<F: FnMut(&str) -> CallbackProgression>(
+        &self,
+        key: &str,
+        mut callback: F,
+    ) {
+        for element in self.0.iter() {
+            if element.key != key {
+                continue;
+            }
+
+            if callback(&element.value) == CallbackProgression::Stop {
+                break;
+            }
+        }
     }
 }

@@ -36,15 +36,15 @@
 //!  });
 //!  ```
 
+use core::{alloc::Layout, fmt::Debug, sync::atomic::Ordering};
 use iceoryx2_bb_elementary::{
-    math::align_to,
+    bump_allocator::BumpAllocator,
     math::unaligned_mem_size,
     owning_pointer::OwningPointer,
     relocatable_container::RelocatableContainer,
     relocatable_ptr::{PointerTrait, RelocatablePointer},
 };
 use iceoryx2_pal_concurrency_sync::iox_atomic::{IoxAtomicBool, IoxAtomicU8, IoxAtomicUsize};
-use std::{alloc::Layout, fmt::Debug, sync::atomic::Ordering};
 
 use iceoryx2_bb_log::{fail, fatal_panic};
 
@@ -125,7 +125,7 @@ pub mod details {
         }
 
         unsafe fn init<T: iceoryx2_bb_elementary::allocator::BaseAllocator>(
-            &self,
+            &mut self,
             allocator: &T,
         ) -> Result<(), iceoryx2_bb_elementary::allocator::AllocationError> {
             if self.is_memory_initialized.load(Ordering::Relaxed) {
@@ -135,8 +135,8 @@ pub mod details {
 
             let memory = fail!(from self, when allocator
             .allocate(Layout::from_size_align_unchecked(
-                    std::mem::size_of::<BitsetElement>() * self.array_capacity,
-                    std::mem::align_of::<BitsetElement>())),
+                    core::mem::size_of::<BitsetElement>() * self.array_capacity,
+                    core::mem::align_of::<BitsetElement>())),
             "Failed to initialize since the allocation of the data memory failed.");
 
             self.data_ptr.init(memory);
@@ -160,16 +160,6 @@ pub mod details {
         fn memory_size(capacity: usize) -> usize {
             Self::const_memory_size(capacity)
         }
-
-        unsafe fn new(capacity: usize, distance_to_data: isize) -> Self {
-            Self {
-                data_ptr: RelocatablePointer::new(distance_to_data),
-                capacity,
-                array_capacity: Self::array_capacity(capacity),
-                is_memory_initialized: IoxAtomicBool::new(true),
-                reset_position: IoxAtomicUsize::new(0),
-            }
-        }
     }
 
     impl<PointerType: PointerTrait<BitsetElement> + Debug> BitSet<PointerType> {
@@ -191,7 +181,7 @@ pub mod details {
         fn verify_init(&self, source: &str) {
             debug_assert!(
                 self.is_memory_initialized.load(Ordering::Relaxed),
-                "Undefined behavior when calling \"{}\" and the object is not initialized.",
+                "Undefined behavior when calling BitSet::{} and the object is not initialized.",
                 source
             );
         }
@@ -252,7 +242,7 @@ pub mod details {
         /// If the bit was successfully set it returns true, if the bit was already set it
         /// returns false.
         pub fn set(&self, id: usize) -> bool {
-            self.verify_init("set");
+            self.verify_init("set()");
             debug_assert!(
                 id < self.capacity,
                 "This should never happen. Out of bounds access with index {}.",
@@ -265,7 +255,7 @@ pub mod details {
         /// Resets the next set bit and returns the bit index. If no bit was set it returns
         /// [`None`].
         pub fn reset_next(&self) -> Option<usize> {
-            self.verify_init("reset_next");
+            self.verify_init("reset_next()");
 
             let current_position = self.reset_position.load(Ordering::Relaxed);
             for pos in (current_position..self.capacity).chain(0..current_position) {
@@ -281,7 +271,7 @@ pub mod details {
         /// Reset every set bit in the BitSet and call the provided callback for every bit that
         /// was set. This is the most efficient way to acquire all bits that were set.
         pub fn reset_all<F: FnMut(usize)>(&self, mut callback: F) {
-            self.verify_init("reset_all");
+            self.verify_init("reset_all()");
 
             for i in 0..self.array_capacity {
                 let value = unsafe { (*self.data_ptr.as_ptr().add(i)).swap(0, Ordering::Relaxed) };
@@ -313,16 +303,20 @@ unsafe impl<const CAPACITY: usize> Sync for FixedSizeBitSet<CAPACITY> {}
 
 impl<const CAPACITY: usize> Default for FixedSizeBitSet<CAPACITY> {
     fn default() -> Self {
-        Self {
-            bitset: unsafe {
-                RelocatableBitSet::new(
-                    CAPACITY,
-                    align_to::<details::BitsetElement>(std::mem::size_of::<RelocatableBitSet>())
-                        as _,
-                )
-            },
+        let mut new_self = Self {
+            bitset: unsafe { RelocatableBitSet::new_uninit(CAPACITY) },
             data: core::array::from_fn(|_| details::BitsetElement::new(0)),
-        }
+        };
+
+        let allocator = BumpAllocator::new(core::ptr::addr_of!(new_self.data) as usize);
+        unsafe {
+            new_self
+                .bitset
+                .init(&allocator)
+                .expect("All required memory is preallocated.")
+        };
+
+        new_self
     }
 }
 

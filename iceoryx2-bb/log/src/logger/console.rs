@@ -13,11 +13,13 @@
 //! The default [`Logger`] implementation.
 
 use iceoryx2_pal_concurrency_sync::iox_atomic::IoxAtomicU64;
-use std::{io::IsTerminal, sync::atomic::Ordering};
+
+use core::sync::atomic::Ordering;
+use std::io::IsTerminal;
 
 use termsize::Size;
 
-use crate::{get_log_level, LogLevel};
+use crate::LogLevel;
 
 pub enum ConsoleLogOrder {
     Time,
@@ -171,18 +173,14 @@ impl Logger {
     }
 }
 
-impl crate::logger::Logger for Logger {
+impl crate::Log for Logger {
     fn log(
         &self,
         log_level: crate::LogLevel,
-        origin: std::fmt::Arguments,
-        formatted_message: std::fmt::Arguments,
+        origin: core::fmt::Arguments,
+        formatted_message: core::fmt::Arguments,
     ) {
         let counter = self.counter.fetch_add(1, Ordering::Relaxed);
-
-        if get_log_level() > log_level as u8 {
-            return;
-        }
 
         let origin_str = origin.to_string();
         let msg_str = formatted_message.to_string();

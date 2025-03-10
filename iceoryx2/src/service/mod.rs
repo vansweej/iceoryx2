@@ -17,7 +17,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //!
 //! let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -44,7 +44,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //!
 //! let event = node.service_builder(&"MyEventName".try_into()?)
@@ -54,6 +54,9 @@
 //!     .max_notifiers(12)
 //!     .max_listeners(2)
 //!     .event_id_max_value(32)
+//!     .notifier_created_event(EventId::new(999))
+//!     .notifier_dropped_event(EventId::new(0))
+//!     .notifier_dead_event(EventId::new(2000))
 //!     // if the service already exists, open it, otherwise create it
 //!     .open_or_create()?;
 //!
@@ -67,7 +70,7 @@
 //! use iceoryx2::prelude::*;
 //! use iceoryx2_bb_system_types::path::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let mut custom_config = Config::default();
 //! // adjust the global root path under which every file/directory is stored
 //! custom_config.global.service.directory = "custom_path".try_into()?;
@@ -90,7 +93,7 @@
 //! use iceoryx2::prelude::*;
 //! use iceoryx2::config::Config;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //!
 //! let service_creator = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -164,9 +167,11 @@ pub mod ipc;
 pub(crate) mod config_scheme;
 pub(crate) mod naming_scheme;
 
-use std::fmt::Debug;
-use std::sync::Arc;
-use std::time::Duration;
+use core::fmt::Debug;
+use core::time::Duration;
+
+extern crate alloc;
+use alloc::sync::Arc;
 
 use crate::config;
 use crate::node::{NodeId, NodeListFailure, NodeState, SharedNode};
@@ -186,9 +191,9 @@ use iceoryx2_cal::monitoring::Monitoring;
 use iceoryx2_cal::named_concept::NamedConceptListError;
 use iceoryx2_cal::named_concept::*;
 use iceoryx2_cal::reactor::Reactor;
+use iceoryx2_cal::resizable_shared_memory::ResizableSharedMemoryForPoolAllocator;
 use iceoryx2_cal::serialize::Serialize;
-use iceoryx2_cal::shared_memory::SharedMemory;
-use iceoryx2_cal::shm_allocator::pool_allocator::PoolAllocator;
+use iceoryx2_cal::shared_memory::SharedMemoryForPoolAllocator;
 use iceoryx2_cal::static_storage::*;
 use iceoryx2_cal::zero_copy_connection::ZeroCopyConnection;
 use service_id::ServiceId;
@@ -201,6 +206,7 @@ use self::service_name::ServiceName;
 pub(crate) enum ServiceRemoveNodeError {
     VersionMismatch,
     InternalError,
+    ServiceInCorruptedState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,13 +236,13 @@ pub enum ServiceDetailsError {
     FailedToAcquireNodeState,
 }
 
-impl std::fmt::Display for ServiceDetailsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ServiceDetailsError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "ServiceDetailsError::{:?}", self)
     }
 }
 
-impl std::error::Error for ServiceDetailsError {}
+impl core::error::Error for ServiceDetailsError {}
 
 /// Failure that can be reported by [`Service::list()`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,13 +253,13 @@ pub enum ServiceListError {
     InternalError,
 }
 
-impl std::fmt::Display for ServiceListError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ServiceListError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "ServiceListError::{:?}", self)
     }
 }
 
-impl std::error::Error for ServiceListError {}
+impl core::error::Error for ServiceListError {}
 
 /// Represents all the [`Service`] information that one can acquire with [`Service::list()`]
 /// when the [`Service`] is accessible by the current process.
@@ -329,22 +335,97 @@ impl<S: Service> Drop for ServiceState<S> {
 }
 
 pub(crate) mod internal {
-    use config_scheme::static_config_storage_config;
+    use builder::event::EventOpenError;
     use dynamic_config::{PortCleanupAction, RemoveDeadNodeResult};
+    use port_factory::PortFactory;
 
     use crate::{
-        node::NodeId,
+        node::{NodeBuilder, NodeId},
         port::{
             listener::remove_connection_of_listener,
+            notifier::Notifier,
             port_identifiers::UniquePortId,
             publisher::{
                 remove_data_segment_of_publisher, remove_publisher_from_all_connections,
                 remove_subscriber_from_all_connections,
             },
         },
+        prelude::EventId,
     };
 
     use super::*;
+
+    fn send_dead_node_signal<S: Service>(service_id: &ServiceId, config: &config::Config) {
+        let origin = "send_dead_node_signal()";
+
+        let service_details = match details::<S>(config, &service_id.0.into()) {
+            Ok(Some(service_details)) => service_details,
+            Ok(None) => return,
+            Err(e) => {
+                warn!(from origin,
+                    "Unable to acquire service details to emit dead node signal to waiting listeners for the service id {:?} due to ({:?})",
+                    service_id, e);
+                return;
+            }
+        };
+
+        let service_name = service_details.static_details.name();
+
+        let mut config = config.clone();
+        config.global.node.cleanup_dead_nodes_on_creation = false;
+        config.global.node.cleanup_dead_nodes_on_destruction = false;
+
+        let node = match NodeBuilder::new().config(&config).create::<S>() {
+            Ok(node) => node,
+            Err(e) => {
+                warn!(from origin,
+                                "Unable to create node to emit dead node signal to waiting listeners on the service {} due to ({:?}).",
+                                service_name, e);
+                return;
+            }
+        };
+
+        let service = match node.service_builder(service_name).event().open() {
+            Ok(service) => service,
+            Err(EventOpenError::DoesNotExist) => return,
+            Err(e) => {
+                warn!(from origin,
+                                "Unable to open event service to emit dead node signal to waiting listeners on the service {} due to ({:?}).",
+                                service_name, e);
+                return;
+            }
+        };
+
+        if service.dynamic_config().number_of_listeners() == 0 {
+            return;
+        }
+
+        let event_id = match service.static_config().notifier_dead_event {
+            Some(event_id) => event_id,
+            None => return,
+        };
+
+        let notifier = match Notifier::new_without_auto_event_emission(
+            &service.service,
+            EventId::new(0),
+        ) {
+            Ok(notifier) => notifier,
+            Err(e) => {
+                warn!(from origin,
+                                "Unable to create notifier to send dead node signal to waiting listeners on the service {} due to ({:?})",
+                                service_name, e);
+                return;
+            }
+        };
+
+        if let Err(e) = notifier.notify_with_custom_event_id(EventId::new(event_id)) {
+            warn!(from origin,
+                            "Unable to send dead node signal to waiting listeners on service {} due to ({:?})",
+                            service_name, e);
+        }
+
+        trace!(from origin, "Send dead node signal on service {}.", service_name);
+    }
 
     pub(crate) trait ServiceInternal<S: Service> {
         fn __internal_from_state(state: ServiceState<S>) -> S;
@@ -364,7 +445,11 @@ pub(crate) mod internal {
 
             let dynamic_config = match open_dynamic_config::<S>(config, service_id) {
                 Ok(Some(c)) => c,
-                Ok(None) => return Ok(()),
+                Ok(None) => {
+                    fail!(from origin,
+                          with ServiceRemoveNodeError::ServiceInCorruptedState,
+                          "{} since the dynamic service segment is missing - service seems to be in a corrupted state.", msg);
+                }
                 Err(ServiceDetailsError::VersionMismatch) => {
                     fail!(from origin, with ServiceRemoveNodeError::VersionMismatch,
                         "{} since the service version does not match.", msg);
@@ -375,6 +460,7 @@ pub(crate) mod internal {
                 }
             };
 
+            let mut number_of_dead_node_notifications = 0;
             let cleanup_port_resources = |port_id| {
                 match port_id {
                     UniquePortId::Publisher(ref id) => {
@@ -399,7 +485,9 @@ pub(crate) mod internal {
                             return PortCleanupAction::SkipPort;
                         }
                     }
-                    UniquePortId::Notifier(_) => (),
+                    UniquePortId::Notifier(_) => {
+                        number_of_dead_node_notifications += 1;
+                    }
                     UniquePortId::Listener(ref id) => {
                         if let Err(e) = unsafe { remove_connection_of_listener::<S>(id, config) } {
                             debug!(from origin, "Failed to remove the listeners ({:?}) connection ({:?}).", id, e);
@@ -425,12 +513,7 @@ pub(crate) mod internal {
             };
 
             if remove_service {
-                match unsafe {
-                    <S::StaticStorage as NamedConceptMgmt>::remove_cfg(
-                        &service_id.0.into(),
-                        &static_config_storage_config::<S>(config),
-                    )
-                } {
+                match unsafe { remove_static_service_config::<S>(config, &service_id.0.into()) } {
                     Ok(_) => {
                         debug!(from origin, "Remove unused service.");
                         dynamic_config.acquire_ownership()
@@ -440,6 +523,8 @@ pub(crate) mod internal {
                             e);
                     }
                 }
+            } else if number_of_dead_node_notifications != 0 {
+                send_dead_node_signal::<S>(service_id, config);
             }
 
             Ok(())
@@ -468,7 +553,10 @@ pub trait Service: Debug + Sized + internal::ServiceInternal<Self> {
     type DynamicStorage: DynamicStorage<DynamicConfig>;
 
     /// The memory used to store the payload.
-    type SharedMemory: SharedMemory<PoolAllocator>;
+    type SharedMemory: SharedMemoryForPoolAllocator;
+
+    /// The dynamic memory used to store dynamic payload
+    type ResizableSharedMemory: ResizableSharedMemoryForPoolAllocator<Self::SharedMemory>;
 
     /// The connection used to exchange pointers to the payload
     type Connection: ZeroCopyConnection;
@@ -490,7 +578,7 @@ pub trait Service: Debug + Sized + internal::ServiceInternal<Self> {
     /// use iceoryx2::prelude::*;
     /// use iceoryx2::config::Config;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn core::error::Error>> {
     /// let name = ServiceName::new("Some/Name")?;
     /// let does_name_exist =
     ///     ipc::Service::does_exist(
@@ -516,7 +604,7 @@ pub trait Service: Debug + Sized + internal::ServiceInternal<Self> {
     /// use iceoryx2::prelude::*;
     /// use iceoryx2::config::Config;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn core::error::Error>> {
     /// let name = ServiceName::new("Some/Name")?;
     /// let details =
     ///     ipc::Service::details(
@@ -547,7 +635,7 @@ pub trait Service: Debug + Sized + internal::ServiceInternal<Self> {
     /// use iceoryx2::prelude::*;
     /// use iceoryx2::config::Config;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn core::error::Error>> {
     /// ipc::Service::list(Config::global_config(), |service| {
     ///     println!("\n{:#?}", &service);
     ///     CallbackProgression::Continue
@@ -578,6 +666,22 @@ pub trait Service: Debug + Sized + internal::ServiceInternal<Self> {
         }
 
         Ok(())
+    }
+}
+
+pub(crate) unsafe fn remove_static_service_config<S: Service>(
+    config: &config::Config,
+    uuid: &FileName,
+) -> Result<bool, NamedConceptRemoveError> {
+    let msg = "Unable to remove static service config";
+    let origin = "Service::remove_static_service_config()";
+    let static_storage_config = config_scheme::static_config_storage_config::<S>(config);
+
+    match <S::StaticStorage as NamedConceptMgmt>::remove_cfg(uuid, &static_storage_config) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            fail!(from origin, with e, "{msg} due to ({:?}).", e);
+        }
     }
 }
 

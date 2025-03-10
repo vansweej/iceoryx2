@@ -12,7 +12,7 @@
 
 package(default_visibility = ["//visibility:public"])
 
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test_suite")
 
 filegroup(
     name = "all_srcs",
@@ -30,7 +30,6 @@ rust_library(
         "//iceoryx2-pal/configuration:iceoryx2-pal-configuration",
         "//iceoryx2-pal/concurrency-sync:iceoryx2-pal-concurrency-sync",
         "//iceoryx2-pal/posix:iceoryx2-pal-posix",
-        "@crate_index//:bitflags",
         "@crate_index//:enum-iterator",
         "@crate_index//:lazy_static",
         "@crate_index//:tiny-fn",
@@ -38,5 +37,22 @@ rust_library(
     ],
 )
 
-# TODO: [349] add feature flags
-# TODO: [349] add tests
+rust_test_suite(
+    name = "iceoryx2-bb-posix-tests",
+    srcs = glob(["tests/**/*.rs"]),
+    deps = [
+        ":iceoryx2-bb-posix",
+        "//iceoryx2-bb/container:iceoryx2-bb-container",
+        "//iceoryx2-bb/elementary:iceoryx2-bb-elementary",
+        "//iceoryx2-bb/log:iceoryx2-bb-log",
+        "//iceoryx2-bb/system-types:iceoryx2-bb-system-types",
+        "//iceoryx2-bb/testing:iceoryx2-bb-testing",
+        "//iceoryx2-pal/posix:iceoryx2-pal-posix",
+        "//iceoryx2-pal/configuration:iceoryx2-pal-configuration",
+        "//iceoryx2-pal/concurrency-sync:iceoryx2-pal-concurrency-sync",
+    ],
+    tags = ["exclusive"],
+    proc_macro_deps = [
+        "@crate_index//:generic-tests",
+    ],
+)

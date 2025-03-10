@@ -25,7 +25,7 @@
 //! use iceoryx2_cal::shm_allocator::pool_allocator;
 //! use iceoryx2_bb_system_types::file_name::FileName;
 //! use iceoryx2_bb_container::semantic_string::SemanticString;
-//! use std::alloc::Layout;
+//! use core::alloc::Layout;
 //!
 //! fn process_one<Shm: SharedMemory<PoolAllocator>>() {
 //!     let shm_name = FileName::new(b"myShmName").unwrap();
@@ -58,11 +58,12 @@ pub mod common;
 pub mod posix;
 pub mod process_local;
 
-use std::{fmt::Debug, time::Duration};
+use core::{fmt::Debug, time::Duration};
 
 pub use crate::shm_allocator::*;
 use crate::static_storage::file::{NamedConcept, NamedConceptBuilder, NamedConceptMgmt};
 use iceoryx2_bb_system_types::file_name::*;
+use pool_allocator::PoolAllocator;
 
 /// Failure returned by [`SharedMemoryBuilder::create()`]
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
@@ -95,6 +96,15 @@ pub struct ShmPointer {
     pub data_ptr: *mut u8,
 }
 
+#[doc(hidden)]
+pub(crate) mod details {
+    use super::*;
+
+    pub trait SharedMemoryLowLevelAPI<Allocator: ShmAllocator> {
+        fn allocator(&self) -> &Allocator;
+    }
+}
+
 /// Creates [`SharedMemory`].
 pub trait SharedMemoryBuilder<Allocator: ShmAllocator, Shm: SharedMemory<Allocator>>:
     NamedConceptBuilder<Shm>
@@ -102,7 +112,9 @@ pub trait SharedMemoryBuilder<Allocator: ShmAllocator, Shm: SharedMemory<Allocat
     /// Defines if a newly created [`SharedMemory`] owns the underlying resources
     fn has_ownership(self, value: bool) -> Self;
 
-    /// Sets the size of the [`SharedMemory`]
+    /// Sets the size of the [`SharedMemory`]. Only relevant when the [`SharedMemory`] is created
+    /// otherwise the already initialized [`SharedMemory`] is completely mapped into the process
+    /// space.
     fn size(self, value: usize) -> Self;
 
     /// The timeout defines how long the [`SharedMemoryBuilder`] should wait for
@@ -126,7 +138,7 @@ pub trait SharedMemoryBuilder<Allocator: ShmAllocator, Shm: SharedMemory<Allocat
 /// Abstract concept of a memory shared between multiple processes. Can be created with the
 /// [`SharedMemoryBuilder`].
 pub trait SharedMemory<Allocator: ShmAllocator>:
-    Sized + Debug + NamedConcept + NamedConceptMgmt
+    Sized + Debug + NamedConcept + NamedConceptMgmt + details::SharedMemoryLowLevelAPI<Allocator>
 {
     type Builder: SharedMemoryBuilder<Allocator, Self>;
 
@@ -142,7 +154,7 @@ pub trait SharedMemory<Allocator: ShmAllocator>:
 
     /// Allocates memory. The alignment in the layout must be smaller or equal
     /// [`SharedMemory::max_alignment()`] otherwise the method will fail.
-    fn allocate(&self, layout: std::alloc::Layout) -> Result<ShmPointer, ShmAllocationError>;
+    fn allocate(&self, layout: core::alloc::Layout) -> Result<ShmPointer, ShmAllocationError>;
 
     /// Release previously allocated memory
     ///
@@ -151,7 +163,7 @@ pub trait SharedMemory<Allocator: ShmAllocator>:
     ///  * the offset must be acquired with [`SharedMemory::allocate()`] - extracted from the
     ///    [`ShmPointer`]
     ///  * the layout must be identical to the one used in [`SharedMemory::allocate()`]
-    unsafe fn deallocate(&self, offset: PointerOffset, layout: std::alloc::Layout);
+    unsafe fn deallocate(&self, offset: PointerOffset, layout: core::alloc::Layout);
 
     /// Returns if the [`SharedMemory`] supports persistency, meaning that the underlying OS
     /// resource remain even when every [`SharedMemory`] instance in every process was removed.
@@ -172,4 +184,17 @@ pub trait SharedMemory<Allocator: ShmAllocator>:
     fn default_suffix() -> FileName {
         unsafe { FileName::new_unchecked(b".shm") }
     }
+}
+
+pub trait SharedMemoryForPoolAllocator: SharedMemory<PoolAllocator> {
+    /// Release previously allocated memory
+    ///
+    /// # Safety
+    ///
+    ///  * the offset must be acquired with [`SharedMemory::allocate()`] - extracted from the
+    ///    [`ShmPointer`]
+    unsafe fn deallocate_bucket(&self, offset: PointerOffset);
+
+    /// Returns the bucket size of the [`PoolAllocator`]
+    fn bucket_size(&self) -> usize;
 }

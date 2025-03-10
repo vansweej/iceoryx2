@@ -43,14 +43,28 @@ Node<T>::~Node() {
 }
 
 template <ServiceType T>
+auto Node<T>::signal_handling_mode() const -> SignalHandlingMode {
+    return iox::into<SignalHandlingMode>(static_cast<int>(iox2_node_signal_handling_mode(&m_handle)));
+}
+
+template <ServiceType T>
 auto Node<T>::name() const -> NodeNameView {
     const auto* node_name_ptr = iox2_node_name(&m_handle);
     return NodeNameView { node_name_ptr };
 }
 
 template <ServiceType T>
+auto Node<T>::config() const -> ConfigView {
+    const auto* config_ptr = iox2_node_config(&m_handle);
+    return ConfigView { config_ptr };
+}
+
+template <ServiceType T>
 auto Node<T>::id() const -> NodeId {
-    IOX_TODO();
+    const auto* node_id_ptr = iox2_node_id(&m_handle, iox::into<iox2_service_type_e>(T));
+    iox2_node_id_h node_id_handle = nullptr;
+    iox2_node_id_clone_from_ptr(nullptr, node_id_ptr, &node_id_handle);
+    return NodeId(node_id_handle);
 }
 
 template <ServiceType T>
@@ -72,28 +86,37 @@ auto Node<T>::service_builder(const ServiceName& name) const -> ServiceBuilder<T
 template <ServiceType T>
 // NOLINTBEGIN(readability-function-size)
 auto list_callback(iox2_node_state_e node_state,
-                   iox2_node_id_ptr node_id,
+                   iox2_node_id_ptr node_id_ptr,
+                   const char* executable,
                    iox2_node_name_ptr node_name,
                    iox2_config_ptr config,
                    iox2_callback_context context) -> iox2_callback_progression_e {
     auto node_details = [&] {
-        if (node_id == nullptr || config == nullptr) {
+        if (node_id_ptr == nullptr || config == nullptr) {
             return iox::optional<NodeDetails>();
         }
 
-        return iox::optional<NodeDetails>(NodeDetails { NodeNameView { node_name }.to_owned(), Config {} });
+        return iox::optional<NodeDetails>(NodeDetails {
+            iox::FileName::create(iox::string<iox::FileName::capacity()>(iox::TruncateToCapacity, executable))
+                .expect("The executable file name is always valid."),
+            NodeNameView { node_name }.to_owned(),
+            Config {} });
     }();
+
+    iox2_node_id_h node_id_handle = nullptr;
+    iox2_node_id_clone_from_ptr(nullptr, node_id_ptr, &node_id_handle);
+    NodeId node_id { node_id_handle };
 
     auto node_state_object = [&] {
         switch (node_state) {
         case iox2_node_state_e_ALIVE:
-            return NodeState<T> { AliveNodeView<T> { NodeId {}, node_details } };
+            return NodeState<T> { AliveNodeView<T> { node_id, node_details } };
         case iox2_node_state_e_DEAD:
-            return NodeState<T> { DeadNodeView<T> { AliveNodeView<T> { NodeId {}, node_details } } };
+            return NodeState<T> { DeadNodeView<T> { AliveNodeView<T> { node_id, node_details } } };
         case iox2_node_state_e_UNDEFINED:
-            return NodeState<T> { iox2_node_state_e_UNDEFINED, NodeId {} };
+            return NodeState<T> { iox2_node_state_e_UNDEFINED, node_id };
         case iox2_node_state_e_INACCESSIBLE:
-            return NodeState<T> { iox2_node_state_e_INACCESSIBLE, NodeId {} };
+            return NodeState<T> { iox2_node_state_e_INACCESSIBLE, node_id };
         }
 
         IOX_UNREACHABLE();
@@ -140,6 +163,11 @@ auto NodeBuilder::create() const&& -> iox::expected<Node<T>, NodeCreationFailure
 
     if (m_config.has_value()) {
         iox2_node_builder_set_config(&m_handle, &m_config.value().m_handle);
+    }
+
+    if (m_signal_handling_mode.has_value()) {
+        iox2_node_builder_set_signal_handling_mode(
+            &m_handle, iox::into<iox2_signal_handling_mode_e>(m_signal_handling_mode.value()));
     }
 
     iox2_node_h node_handle {};

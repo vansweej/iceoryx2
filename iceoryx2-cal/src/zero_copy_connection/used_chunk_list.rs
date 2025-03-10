@@ -10,21 +10,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+use core::{alloc::Layout, sync::atomic::Ordering};
 use iceoryx2_bb_elementary::{
-    math::align_to,
+    bump_allocator::BumpAllocator,
     owning_pointer::OwningPointer,
     relocatable_container::RelocatableContainer,
     relocatable_ptr::{PointerTrait, RelocatablePointer},
 };
 use iceoryx2_bb_log::{fail, fatal_panic};
 use iceoryx2_pal_concurrency_sync::iox_atomic::IoxAtomicBool;
-use std::{alloc::Layout, sync::atomic::Ordering};
 
 pub type UsedChunkList = details::UsedChunkList<OwningPointer<IoxAtomicBool>>;
 pub type RelocatableUsedChunkList = details::UsedChunkList<RelocatablePointer<IoxAtomicBool>>;
 
 pub mod details {
-    use std::fmt::Debug;
+    use core::fmt::Debug;
 
     use iceoryx2_bb_elementary::{math::unaligned_mem_size, owning_pointer::OwningPointer};
 
@@ -72,7 +72,7 @@ pub mod details {
         }
 
         unsafe fn init<T: iceoryx2_bb_elementary::allocator::BaseAllocator>(
-            &self,
+            &mut self,
             allocator: &T,
         ) -> Result<(), iceoryx2_bb_elementary::allocator::AllocationError> {
             if self.is_memory_initialized.load(Ordering::Relaxed) {
@@ -82,8 +82,8 @@ pub mod details {
 
             let memory = fail!(from self, when allocator
             .allocate(Layout::from_size_align_unchecked(
-                    std::mem::size_of::<IoxAtomicBool>() * self.capacity,
-                    std::mem::align_of::<IoxAtomicBool>())),
+                    core::mem::size_of::<IoxAtomicBool>() * self.capacity,
+                    core::mem::align_of::<IoxAtomicBool>())),
             "Failed to initialize since the allocation of the data memory failed.");
 
             self.data_ptr.init(memory);
@@ -106,14 +106,6 @@ pub mod details {
 
         fn memory_size(capacity: usize) -> usize {
             Self::const_memory_size(capacity)
-        }
-
-        unsafe fn new(capacity: usize, distance_to_data: isize) -> Self {
-            Self {
-                data_ptr: RelocatablePointer::new(distance_to_data),
-                capacity,
-                is_memory_initialized: IoxAtomicBool::new(true),
-            }
         }
     }
 
@@ -175,15 +167,19 @@ pub struct FixedSizeUsedChunkList<const CAPACITY: usize> {
 
 impl<const CAPACITY: usize> Default for FixedSizeUsedChunkList<CAPACITY> {
     fn default() -> Self {
-        Self {
-            list: unsafe {
-                RelocatableUsedChunkList::new(
-                    CAPACITY,
-                    align_to::<IoxAtomicBool>(std::mem::size_of::<RelocatableUsedChunkList>()) as _,
-                )
-            },
+        let mut new_self = Self {
+            list: unsafe { RelocatableUsedChunkList::new_uninit(CAPACITY) },
             data: core::array::from_fn(|_| IoxAtomicBool::new(false)),
-        }
+        };
+
+        let allocator = BumpAllocator::new(core::ptr::addr_of!(new_self.data) as usize);
+        unsafe {
+            new_self
+                .list
+                .init(&allocator)
+                .expect("All required memory is preallocated.")
+        };
+        new_self
     }
 }
 

@@ -26,7 +26,7 @@ class NodeTest : public ::testing::Test {
     static constexpr ServiceType TYPE = T::TYPE;
 };
 
-TYPED_TEST_SUITE(NodeTest, iox2_testing::ServiceTypes);
+TYPED_TEST_SUITE(NodeTest, iox2_testing::ServiceTypes, );
 
 TYPED_TEST(NodeTest, node_name_is_applied) {
     constexpr ServiceType SERVICE_TYPE = TestFixture::TYPE;
@@ -70,11 +70,39 @@ TYPED_TEST(NodeTest, created_nodes_can_be_listed) {
     }
 
     uint64_t counter = 0;
-    auto result = Node<SERVICE_TYPE>::list(Config::global_config(), [&](auto node_state) {
+    auto result = Node<SERVICE_TYPE>::list(Config::global_config(), [&](const auto&) {
         counter++;
         return CallbackProgression::Continue;
     });
     ASSERT_TRUE(result.has_value());
     ASSERT_THAT(counter, Eq(0));
+}
+
+TYPED_TEST(NodeTest, signal_handling_mode_can_be_set) {
+    constexpr ServiceType SERVICE_TYPE = TestFixture::TYPE;
+
+    auto sut_1 = NodeBuilder().signal_handling_mode(SignalHandlingMode::Disabled).create<SERVICE_TYPE>().expect("");
+    auto sut_2 = NodeBuilder()
+                     .signal_handling_mode(SignalHandlingMode::HandleTerminationRequests)
+                     .create<SERVICE_TYPE>()
+                     .expect("");
+
+    ASSERT_THAT(sut_1.signal_handling_mode(), Eq(SignalHandlingMode::Disabled));
+    ASSERT_THAT(sut_2.signal_handling_mode(), Eq(SignalHandlingMode::HandleTerminationRequests));
+}
+
+TYPED_TEST(NodeTest, node_id_is_unique) {
+    constexpr ServiceType SERVICE_TYPE = TestFixture::TYPE;
+
+    auto sut_1 = NodeBuilder().create<SERVICE_TYPE>().expect("");
+    auto sut_2 = NodeBuilder().create<SERVICE_TYPE>().expect("");
+
+    auto id_1 = sut_1.id();
+    auto id_1_1 = sut_1.id();
+    auto id_2 = sut_2.id();
+
+    ASSERT_THAT(id_1, Eq(id_1_1));
+    ASSERT_THAT(id_2, Ne(id_1));
+    ASSERT_THAT(id_1.pid(), Eq(id_2.pid()));
 }
 } // namespace

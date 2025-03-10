@@ -1,4 +1,4 @@
-// Copyright (c) 2023 Contributors to the Eclipse Foundation
+// Copyright (c) 2023 - 2024 Contributors to the Eclipse Foundation
 //
 // See the NOTICE file(s) distributed with this work for additional
 // information regarding copyright ownership.
@@ -10,15 +10,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+use iceoryx2_bb_container::vec::*;
+use iceoryx2_bb_elementary::bump_allocator::BumpAllocator;
+use iceoryx2_bb_elementary::placement_default::PlacementDefault;
+use iceoryx2_bb_elementary::relocatable_container::RelocatableContainer;
+use iceoryx2_bb_testing::assert_that;
+use iceoryx2_bb_testing::lifetime_tracker::LifetimeTracker;
+use iceoryx2_bb_testing::memory::RawMemory;
+use serde_test::{assert_tokens, Token};
+
 mod fixed_size_vec {
-    use iceoryx2_bb_container::vec::*;
-    use iceoryx2_bb_elementary::bump_allocator::BumpAllocator;
-    use iceoryx2_bb_elementary::placement_default::PlacementDefault;
-    use iceoryx2_bb_elementary::relocatable_container::RelocatableContainer;
-    use iceoryx2_bb_testing::assert_that;
-    use iceoryx2_bb_testing::lifetime_tracker::LifetimeTracker;
-    use iceoryx2_bb_testing::memory::RawMemory;
-    use serde_test::{assert_tokens, Token};
+    use super::*;
 
     const SUT_CAPACITY: usize = 128;
     type Sut = FixedSizeVec<usize, SUT_CAPACITY>;
@@ -205,35 +207,35 @@ mod fixed_size_vec {
 
     #[test]
     fn drops_all_objects_when_out_of_scope() {
-        LifetimeTracker::start_tracking();
+        let state = LifetimeTracker::start_tracking();
         let mut sut = FixedSizeVec::<LifetimeTracker, SUT_CAPACITY>::new();
 
         for _ in 0..SUT_CAPACITY {
             assert_that!(sut.push(LifetimeTracker::new()), eq true);
         }
 
-        assert_that!(LifetimeTracker::number_of_living_instances(), eq SUT_CAPACITY);
+        assert_that!(state.number_of_living_instances(), eq SUT_CAPACITY);
         drop(sut);
-        assert_that!(LifetimeTracker::number_of_living_instances(), eq 0);
+        assert_that!(state.number_of_living_instances(), eq 0);
     }
 
     #[test]
     fn drops_all_objects_with_clear() {
-        LifetimeTracker::start_tracking();
+        let state = LifetimeTracker::start_tracking();
         let mut sut = FixedSizeVec::<LifetimeTracker, SUT_CAPACITY>::new();
 
         for _ in 0..SUT_CAPACITY {
             assert_that!(sut.push(LifetimeTracker::new()), eq true);
         }
 
-        assert_that!(LifetimeTracker::number_of_living_instances(), eq SUT_CAPACITY);
+        assert_that!(state.number_of_living_instances(), eq SUT_CAPACITY);
         sut.clear();
-        assert_that!(LifetimeTracker::number_of_living_instances(), eq 0);
+        assert_that!(state.number_of_living_instances(), eq 0);
     }
 
     #[test]
     fn pop_releases_ownership() {
-        LifetimeTracker::start_tracking();
+        let state = LifetimeTracker::start_tracking();
         let mut sut = FixedSizeVec::<LifetimeTracker, SUT_CAPACITY>::new();
 
         for _ in 0..SUT_CAPACITY {
@@ -244,7 +246,7 @@ mod fixed_size_vec {
             let result = sut.pop();
             assert_that!(result, is_some);
             drop(result);
-            assert_that!(LifetimeTracker::number_of_living_instances(), eq i);
+            assert_that!(state.number_of_living_instances(), eq i);
         }
     }
 
@@ -310,5 +312,25 @@ mod fixed_size_vec {
                 Token::SeqEnd,
             ],
         );
+    }
+}
+
+mod vec {
+    use super::*;
+
+    #[test]
+    fn push_and_pop_element_works() {
+        const CAPACITY: usize = 12;
+        const TEST_VALUE: usize = 89123;
+        let mut sut = Vec::<usize>::new(CAPACITY);
+        assert_that!(sut.capacity(), eq CAPACITY);
+        assert_that!(sut, len 0);
+
+        sut.push(TEST_VALUE);
+
+        assert_that!(sut, len 1);
+        assert_that!(sut[0], eq TEST_VALUE);
+        assert_that!(sut.pop(), eq Some(TEST_VALUE));
+        assert_that!(sut, len 0);
     }
 }

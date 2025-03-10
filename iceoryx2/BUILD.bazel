@@ -12,7 +12,7 @@
 
 package(default_visibility = ["//visibility:public"])
 
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test_suite")
 
 filegroup(
     name = "all_srcs",
@@ -22,6 +22,22 @@ filegroup(
 rust_library(
     name = "iceoryx2",
     srcs = glob(["src/**/*.rs"]),
+    crate_features = select({
+        "//:cfg_feature_dev_permissions": [
+            "dev_permissions"
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//:cfg_feature_logger_log": [
+            "logger_log"
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//:cfg_feature_logger_tracing": [
+            "logger_tracing"
+        ],
+        "//conditions:default": [],
+    }),
     deps = [
         "//iceoryx2-bb/container:iceoryx2-bb-container",
         "//iceoryx2-bb/elementary:iceoryx2-bb-elementary",
@@ -32,10 +48,7 @@ rust_library(
         "//iceoryx2-bb/system-types:iceoryx2-bb-system-types",
         "//iceoryx2-cal:iceoryx2-cal",
         "//iceoryx2-pal/concurrency-sync:iceoryx2-pal-concurrency-sync",
-        "@crate_index//:cdr",
-        "@crate_index//:lazy_static",
         "@crate_index//:serde",
-        "@crate_index//:sha1_smol",
         "@crate_index//:tiny-fn",
         "@crate_index//:toml",
     ],
@@ -44,5 +57,19 @@ rust_library(
     ],
 )
 
-# TODO: [349] add feature flags
-# TODO: [349] add tests
+rust_test_suite(
+    name = "iceoryx2-tests",
+    srcs = glob(["tests/**/*.rs"]),
+    deps = [
+        ":iceoryx2",
+        "//iceoryx2-bb/elementary:iceoryx2-bb-elementary",
+        "//iceoryx2-bb/log:iceoryx2-bb-log",
+        "//iceoryx2-bb/system-types:iceoryx2-bb-system-types",
+        "//iceoryx2-bb/posix:iceoryx2-bb-posix",
+        "//iceoryx2-bb/testing:iceoryx2-bb-testing",
+        "//iceoryx2-cal:iceoryx2-cal",
+    ],
+    proc_macro_deps = [
+        "@crate_index//:generic-tests",
+    ],
+)

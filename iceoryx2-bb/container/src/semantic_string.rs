@@ -62,10 +62,10 @@
 
 use crate::byte_string::FixedSizeByteStringModificationError;
 use crate::byte_string::{as_escaped_string, strnlen, FixedSizeByteString};
+use core::fmt::{Debug, Display};
+use core::hash::Hash;
+use core::ops::Deref;
 use iceoryx2_bb_log::fail;
-use std::fmt::{Debug, Display};
-use std::hash::Hash;
-use std::ops::Deref;
 
 /// Failures that can occur when a [`SemanticString`] is created or modified
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -82,13 +82,13 @@ impl From<FixedSizeByteStringModificationError> for SemanticStringError {
     }
 }
 
-impl std::fmt::Display for SemanticStringError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for SemanticStringError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "SemanticStringError::{:?}", self)
     }
 }
 
-impl std::error::Error for SemanticStringError {}
+impl core::error::Error for SemanticStringError {}
 
 #[doc(hidden)]
 pub mod internal {
@@ -151,8 +151,8 @@ pub trait SemanticString<const CAPACITY: usize>:
     ///   * The contents must have a length that is less or equal CAPACITY
     ///   * The contents must not contain invalid UTF-8 characters
     ///
-    unsafe fn from_c_str(ptr: *const std::ffi::c_char) -> Result<Self, SemanticStringError> {
-        Self::new(std::slice::from_raw_parts(
+    unsafe fn from_c_str(ptr: *const core::ffi::c_char) -> Result<Self, SemanticStringError> {
+        Self::new(core::slice::from_raw_parts(
             ptr.cast(),
             strnlen(ptr, CAPACITY + 1),
         ))
@@ -164,13 +164,25 @@ pub trait SemanticString<const CAPACITY: usize>:
     }
 
     /// Returns a zero terminated slice of the underlying bytes
-    fn as_c_str(&self) -> *const std::ffi::c_char {
+    fn as_c_str(&self) -> *const core::ffi::c_char {
         self.as_string().as_c_str()
     }
 
     /// Returns the capacity of the file system type
     fn capacity(&self) -> usize {
         self.as_string().capacity()
+    }
+
+    /// Finds the first occurrence of a  byte string in the given string. If the byte string was
+    /// found the start position of the byte string is returned, otherwise [`None`].
+    fn find(&self, bytes: &[u8]) -> Option<usize> {
+        self.as_string().find(bytes)
+    }
+
+    /// Finds the last occurrence of a byte string in the given string. If the byte string was
+    /// found the start position of the byte string is returned, otherwise [`None`].
+    fn rfind(&self, bytes: &[u8]) -> Option<usize> {
+        self.as_string().find(bytes)
     }
 
     /// Returns true when the string is full, otherwise false
@@ -391,7 +403,7 @@ macro_rules! semantic_string {
         impl<'de> serde::de::Visitor<'de> for VisitorType::$string_name {
             type Value = $string_name;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
                 formatter.write_str("a string containing the service name")
             }
 
@@ -420,7 +432,7 @@ macro_rules! semantic_string {
             where
                 S: serde::Serializer,
             {
-                serializer.serialize_str(std::str::from_utf8(self.as_bytes()).unwrap())
+                serializer.serialize_str(core::str::from_utf8(self.as_bytes()).unwrap())
             }
         }
         // END: serde
@@ -452,8 +464,8 @@ macro_rules! semantic_string {
             }
         }
 
-        impl std::fmt::Display for $string_name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        impl core::fmt::Display for $string_name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 std::write!(f, "{}", self.value)
             }
         }
@@ -478,7 +490,7 @@ macro_rules! semantic_string {
             }
         }
 
-        impl std::convert::TryFrom<&str> for $string_name {
+        impl core::convert::TryFrom<&str> for $string_name {
             type Error = iceoryx2_bb_container::semantic_string::SemanticStringError;
 
             fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -536,7 +548,7 @@ macro_rules! semantic_string {
             }
         }
 
-        impl std::ops::Deref for $string_name {
+        impl core::ops::Deref for $string_name {
             type Target = [u8];
 
             fn deref(&self) -> &Self::Target {

@@ -13,6 +13,21 @@
 ---
 
 #
+# Global environment variables
+#
+
+env:
+  CI_ENABLED: true
+  # RUSTFLAGS: "-C debug-assertions"
+
+#
+# Filter to run the CI only on the main branch or for pull request to the main branch
+#
+
+# TODO: check why !$CIRRUS_PR_DRAFT breaks the CI on the main branch
+only_if: $CI_ENABLED && ( $CIRRUS_BRANCH == 'main' || ($CIRRUS_PR != '' && $CIRRUS_BASE_BRANCH == 'main'))
+
+#
 # Templates
 #
 
@@ -81,19 +96,19 @@ iox2_common_build_debug_template: &IOX2_COMMON_BUILD_DEBUG
 
 iox2_common_build_and_test_debug_template: &IOX2_COMMON_BUILD_AND_TEST_DEBUG
   <<: *IOX2_COMMON_BUILD_DEBUG
-  test_script: cargo nextest run --workspace --no-fail-fast
+  test_script: cargo nextest run --workspace --all-targets --no-fail-fast
 
 iox2_common_build_release_template: &IOX2_COMMON_BUILD_RELEASE
   build_script: cargo build --release --workspace --all-targets
 
 iox2_common_build_and_test_no_doc_tests_release_template: &IOX2_COMMON_BUILD_AND_TEST_NO_DOC_TESTS_RELEASE
   <<: *IOX2_COMMON_BUILD_RELEASE
-  test_script: cargo nextest run --release --tests --workspace --no-fail-fast
+  test_script: cargo nextest run --release --tests --workspace --all-targets --no-fail-fast
 
 iox2_ffi_common_debug_template: &IOX2_FFI_COMMON_DEBUG
   ffi_script:
     - ./internal/scripts/ci_build_and_install_iceoryx_hoofs.sh
-    - cmake -S . -B target/ffi/build -DCMAKE_BUILD_TYPE=Debug -DBUILD_EXAMPLES=ON -DBUILD_TESTING=ON -DCMAKE_INSTALL_PREFIX=target/ffi/install -DCMAKE_INSTALL_PREFIX="$( pwd )/target/iceoryx/install"
+    - cmake -S . -B target/ffi/build -DCMAKE_BUILD_TYPE=Debug -DBUILD_EXAMPLES=ON -DBUILD_TESTING=ON -DCMAKE_INSTALL_PREFIX=target/ffi/install -DCMAKE_INSTALL_PREFIX="$( pwd )/target/iceoryx/install" -DRUST_BUILD_ARTIFACT_PATH="$( pwd )/target/debug"
     - cmake --build target/ffi/build
     - cmake --install target/ffi/build
     - target/ffi/build/tests/iceoryx2-c-tests
@@ -106,7 +121,7 @@ iox2_ffi_common_debug_template: &IOX2_FFI_COMMON_DEBUG
 iox2_ffi_common_release_template: &IOX2_FFI_COMMON_RELEASE
   ffi_script:
     - ./internal/scripts/ci_build_and_install_iceoryx_hoofs.sh
-    - cmake -S . -B target/ffi/build -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=ON -DBUILD_TESTING=ON -DCMAKE_INSTALL_PREFIX=target/ffi/install -DCMAKE_INSTALL_PREFIX="$( pwd )/target/iceoryx/install"
+    - cmake -S . -B target/ffi/build -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=ON -DBUILD_TESTING=ON -DCMAKE_INSTALL_PREFIX=target/ffi/install -DCMAKE_INSTALL_PREFIX="$( pwd )/target/iceoryx/install" -DRUST_BUILD_ARTIFACT_PATH="$( pwd )/target/release"
     - cmake --build target/ffi/build
     - cmake --install target/ffi/build
     - target/ffi/build/tests/iceoryx2-c-tests
@@ -129,19 +144,6 @@ iox2_freebsd_setup_template: &IOX2_FREEBSD_SETUP
     - mount -t mqueuefs null /mnt/mqueue/
     - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
     - rustup component add clippy rustfmt
-
-#
-# Filter to run the CI only on the main branch or for pull request to the main branch
-#
-
-only_if: ( $CIRRUS_BRANCH == 'main' || ($CIRRUS_PR != '' && $CIRRUS_BASE_BRANCH == 'main'))
-
-#
-# Global environment variables
-#
-
-env:
-  RUSTFLAGS: "-C debug-assertions"
 
 #
 # Preflight-Check with Ubuntu x86 stable debug
@@ -178,7 +180,7 @@ ubuntu_22_04_x64_min_version_debug_task:
   only_if: false
   depends_on: preflight_check
   <<: *IOX2_CONTAINER_UBUNTU_22_04_X64
-  set_toolchain_script: rustup default 1.75.0
+  set_toolchain_script: rustup default 1.81.0
   <<: *IOX2_COMMON_BUILD_AND_TEST_DEBUG
   linux_only_doc_test_script: cargo test --doc -- --ignored
 
@@ -226,10 +228,12 @@ ubuntu_22_04_x64_stable_release_task:
 # Pipeline 4
 
 ubuntu_22_04_aarch64_min_version_debug_task:
+  # TODO run only after merge on main branch
+  only_if: $CIRRUS_BRANCH == 'main'
   depends_on: preflight_check
   skip: "changesIncludeOnly('.github/**', '**.md')"
   <<: *IOX2_CONTAINER_UBUNTU_22_04_AARCH64
-  set_toolchain_script: rustup default 1.75.0
+  set_toolchain_script: rustup default 1.81.0
   <<: *IOX2_COMMON_BUILD_AND_TEST_DEBUG
 
 ubuntu_22_04_aarch64_stable_debug_task:
@@ -254,6 +258,8 @@ ubuntu_22_04_aarch64_beta_debug_task:
 # Pipeline 5
 
 ubuntu_22_04_aarch64_stable_release_task:
+  # TODO run only after merge on main branch
+  only_if: $CIRRUS_BRANCH == 'main'
   depends_on: preflight_check
   skip: "changesIncludeOnly('.github/**', '**.md')"
   <<: *IOX2_CONTAINER_UBUNTU_22_04_AARCH64
@@ -268,6 +274,8 @@ ubuntu_22_04_aarch64_stable_release_task:
 # Pipeline 6
 
 arch_linux_x64_stable_debug_task:
+  # TODO commented out due to limited CI time
+  only_if: false
   depends_on: preflight_check
   skip: "changesIncludeOnly('.github/**', '**.md')"
   <<: *IOX2_CONTAINER_ARCH_LINUX_X64
@@ -334,7 +342,7 @@ freebsd_x64_min_version_debug_task:
     PATH: /root/.cargo/bin:$PATH
     HOME: /root  # must be set manually to '/root' or 'rustup' will throw an error
   <<: *IOX2_FREEBSD_SETUP
-  set_toolchain_script: rustup default 1.75.0
+  set_toolchain_script: rustup default 1.81.0
   <<: *IOX2_COMMON_BUILD_AND_TEST_DEBUG
 
 freebsd_x64_stable_debug_task:
@@ -367,7 +375,7 @@ macos_aarch64_min_version_debug_task:
     - uname -a
     - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
     - rustup component add clippy rustfmt
-  set_toolchain_script: rustup default 1.75.0
+  set_toolchain_script: rustup default 1.81.0
   <<: *IOX2_COMMON_BUILD_AND_TEST_DEBUG
 
 macos_aarch64_stable_debug_task:

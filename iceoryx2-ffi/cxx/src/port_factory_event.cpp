@@ -26,8 +26,7 @@ PortFactoryEvent<S>::~PortFactoryEvent() {
 }
 
 template <ServiceType S>
-PortFactoryEvent<S>::PortFactoryEvent(PortFactoryEvent&& rhs) noexcept
-    : m_handle { nullptr } {
+PortFactoryEvent<S>::PortFactoryEvent(PortFactoryEvent&& rhs) noexcept {
     *this = std::move(rhs);
 }
 
@@ -62,8 +61,8 @@ auto PortFactoryEvent<S>::service_id() const -> const ServiceId& {
 }
 
 template <ServiceType S>
-auto PortFactoryEvent<S>::attributes() const -> const AttributeSet& {
-    IOX_TODO();
+auto PortFactoryEvent<S>::attributes() const -> AttributeSetView {
+    return AttributeSetView(iox2_port_factory_event_attributes(&m_handle));
 }
 
 template <ServiceType S>
@@ -80,7 +79,7 @@ auto PortFactoryEvent<S>::dynamic_config() const -> const DynamicConfigEvent& {
 }
 
 template <ServiceType S>
-auto PortFactoryEvent<S>::nodes(const iox::function<CallbackProgression(NodeState<S>)>& callback) const
+auto PortFactoryEvent<S>::nodes([[maybe_unused]] const iox::function<CallbackProgression(NodeState<S>)>& callback) const
     -> iox::expected<void, NodeListFailure> {
     IOX_TODO();
 }

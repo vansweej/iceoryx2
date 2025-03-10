@@ -10,6 +10,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+#![warn(clippy::alloc_instead_of_core)]
+#![warn(clippy::std_instead_of_alloc)]
+#![warn(clippy::std_instead_of_core)]
+
 //! Abstraction of POSIX constructs with a safe API
 
 use barrier::BarrierCreationError;
@@ -34,9 +38,9 @@ pub mod access_mode;
 pub mod adaptive_wait;
 pub mod barrier;
 pub mod clock;
-pub mod condition_variable;
 pub mod config;
 pub mod creation_mode;
+pub mod socket_pair;
 pub mod udp_socket;
 #[macro_use]
 pub mod handle_errno;
@@ -51,7 +55,6 @@ pub mod group;
 pub mod ipc_capable;
 pub mod memory;
 pub mod memory_lock;
-pub mod message_queue;
 pub mod metadata;
 pub mod mutex;
 pub mod ownership;

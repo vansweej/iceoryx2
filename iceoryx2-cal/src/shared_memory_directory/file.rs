@@ -10,9 +10,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+use core::{alloc::Layout, fmt::Debug};
 use iceoryx2_bb_log::fail;
 use iceoryx2_bb_system_types::file_name::FileName;
-use std::{alloc::Layout, fmt::Debug};
 
 use crate::shared_memory::ShmPointer;
 use crate::shared_memory_directory::SharedMemoryDirectoryCreateFileError;
@@ -26,7 +26,7 @@ pub struct File<'a> {
 }
 
 impl Debug for File<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "File {{ name: {}, id: {:?}, base_address: {} }}",
@@ -37,7 +37,7 @@ impl Debug for File<'_> {
     }
 }
 
-impl<'a> File<'a> {
+impl File<'_> {
     pub fn name(&self) -> FileName {
         self.set.get_name(self.id)
     }
@@ -55,7 +55,7 @@ impl<'a> File<'a> {
     }
 }
 
-impl<'a> Drop for File<'a> {
+impl Drop for File<'_> {
     fn drop(&mut self) {
         self.set.release(self.id)
     }
@@ -98,7 +98,7 @@ impl<'a> FileCreator<'a> {
     ) -> Result<File<'a>, SharedMemoryDirectoryCreateFileError> {
         let id = fail!(from self, when self.set.insert(
                                         name,
-                                        self.memory.offset.value(),
+                                        self.memory.offset.offset(),
                                         self.layout.size(),
                                         self.is_persistent,
                                     ),

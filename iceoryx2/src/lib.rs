@@ -10,6 +10,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+#![warn(clippy::alloc_instead_of_core)]
+#![warn(clippy::std_instead_of_alloc)]
+#![warn(clippy::std_instead_of_core)]
 #![warn(missing_docs)]
 
 //! # iceoryx2
@@ -63,7 +66,7 @@
 //! use core::time::Duration;
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! const CYCLE_TIME: Duration = Duration::from_secs(1);
 //!
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
@@ -90,7 +93,7 @@
 //! use core::time::Duration;
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! const CYCLE_TIME: Duration = Duration::from_secs(1);
 //!
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
@@ -124,7 +127,7 @@
 //! use core::time::Duration;
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! const CYCLE_TIME: Duration = Duration::from_secs(1);
 //!
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
@@ -151,7 +154,7 @@
 //! use core::time::Duration;
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! const CYCLE_TIME: Duration = Duration::from_secs(1);
 //!
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
@@ -188,7 +191,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //!
 //! let service = node.service_builder(&"PubSubQos".try_into()?)
@@ -215,7 +218,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //!
 //! let event = node.service_builder(&"EventQos".try_into()?)
@@ -245,7 +248,7 @@
 //! use iceoryx2::prelude::*;
 //! use iceoryx2::service::port_factory::publisher::UnableToDeliverStrategy;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //!
 //! let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -308,5 +311,16 @@ pub mod sample_mut_uninit;
 /// [`MessagingPattern`](crate::service::messaging_pattern::MessagingPattern)
 pub mod service;
 
+/// Defines how constructs like the [`Node`](crate::node::Node) or the
+/// [`WaitSet`](crate::waitset::WaitSet) shall handle system signals.
+pub mod signal_handling_mode;
+
 /// Loads a meaninful subset to cover 90% of the iceoryx2 communication use cases.
 pub mod prelude;
+
+#[doc(hidden)]
+pub mod testing;
+
+/// Event handling mechanism to wait on multiple [`Listener`](crate::port::listener::Listener)s
+/// in one call, realizing the reactor pattern. (Event multiplexer)
+pub mod waitset;

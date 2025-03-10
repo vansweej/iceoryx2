@@ -19,8 +19,7 @@ Notifier<S>::Notifier(iox2_notifier_h handle)
 }
 
 template <ServiceType S>
-Notifier<S>::Notifier(Notifier&& rhs) noexcept
-    : m_handle { nullptr } {
+Notifier<S>::Notifier(Notifier&& rhs) noexcept {
     *this = std::move(rhs);
 }
 
@@ -71,6 +70,18 @@ auto Notifier<S>::notify_with_custom_event_id(EventId event_id) const -> iox::ex
     }
 
     return iox::err(iox::into<NotifierNotifyError>(result));
+}
+
+template <ServiceType S>
+auto Notifier<S>::deadline() const -> iox::optional<iox::units::Duration> {
+    uint64_t seconds = 0;
+    uint32_t nanoseconds = 0;
+
+    if (iox2_notifier_deadline(&m_handle, &seconds, &nanoseconds)) {
+        return { iox::units::Duration::fromSeconds(seconds) + iox::units::Duration::fromNanoseconds(nanoseconds) };
+    }
+
+    return iox::nullopt;
 }
 
 template <ServiceType S>

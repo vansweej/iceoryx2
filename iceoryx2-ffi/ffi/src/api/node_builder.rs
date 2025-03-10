@@ -20,15 +20,19 @@ use crate::api::{
 use iceoryx2::node::NodeCreationFailure;
 use iceoryx2::prelude::*;
 use iceoryx2_bb_elementary::static_assert::*;
+use iceoryx2_bb_elementary::AsCStr;
 use iceoryx2_bb_log::fatal_panic;
 use iceoryx2_ffi_macros::iceoryx2_ffi;
+use iceoryx2_ffi_macros::CStrRepr;
 
-use core::ffi::c_int;
+use core::ffi::{c_char, c_int};
+
+use super::iox2_signal_handling_mode_e;
 
 // BEGIN types definition
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, CStrRepr)]
 pub enum iox2_node_creation_failure_e {
     INSUFFICIENT_PERMISSIONS = IOX2_OK as isize + 1,
     INTERNAL_ERROR,
@@ -99,6 +103,27 @@ impl HandleToType for iox2_node_builder_h_ref {
 
 // BEGIN C API
 
+/// Returns a string literal describing the provided [`iox2_node_creation_failure_e`].
+///
+/// # Arguments
+///
+/// * `error` - The error value for which a description should be returned
+///
+/// # Returns
+///
+/// A pointer to a null-terminated string containing the error message.
+/// The string is stored in the .rodata section of the binary.
+///
+/// # Safety
+///
+/// The returned pointer must not be modified or freed and is valid as long as the program runs.
+#[no_mangle]
+pub unsafe extern "C" fn iox2_node_creation_failure_string(
+    error: iox2_node_creation_failure_e,
+) -> *const c_char {
+    error.as_const_cstr().as_ptr() as *const c_char
+}
+
 /// Creates a builder for nodes
 ///
 /// # Arguments
@@ -139,8 +164,6 @@ pub unsafe extern "C" fn iox2_node_builder_new(
 /// * `node_name_ptr` - Must be a valid [`iox2_node_name_ptr`], e.g. obtained by [`iox2_node_name_new`](crate::iox2_node_name_new) and converted
 ///    by [`iox2_cast_node_name_ptr`](crate::iox2_cast_node_name_ptr)
 ///
-/// Returns IOX2_OK
-///
 /// # Safety
 ///
 /// * `node_builder_handle` as well as `node_name_ptr` must be valid handles
@@ -148,7 +171,7 @@ pub unsafe extern "C" fn iox2_node_builder_new(
 pub unsafe extern "C" fn iox2_node_builder_set_name(
     node_builder_handle: iox2_node_builder_h_ref,
     node_name_ptr: iox2_node_name_ptr,
-) -> c_int {
+) {
     node_builder_handle.assert_non_null();
     debug_assert!(!node_name_ptr.is_null());
 
@@ -157,8 +180,29 @@ pub unsafe extern "C" fn iox2_node_builder_set_name(
     let node_builder = node_builder_struct.take().unwrap();
     let node_builder = node_builder.name(&*node_name_ptr);
     node_builder_struct.set(node_builder);
+}
 
-    IOX2_OK
+/// Sets the [`iox2_signal_handling_mode_e`] for the [`iox2_node_h`].
+///
+/// # Arguments
+///
+/// * `node_builder_handle` - Must be a valid [`iox2_node_builder_h_ref`] obtained by [`iox2_node_builder_new`].
+///
+/// # Safety
+///
+/// * `node_builder_handle` must be a valid handle
+#[no_mangle]
+pub unsafe extern "C" fn iox2_node_builder_set_signal_handling_mode(
+    node_builder_handle: iox2_node_builder_h_ref,
+    signal_handling_mode: iox2_signal_handling_mode_e,
+) {
+    node_builder_handle.assert_non_null();
+
+    let node_builder_struct = &mut *node_builder_handle.as_type();
+
+    let node_builder = node_builder_struct.take().unwrap();
+    let node_builder = node_builder.signal_handling_mode(signal_handling_mode.into());
+    node_builder_struct.set(node_builder);
 }
 
 /// Sets the node config for the builder
@@ -191,7 +235,7 @@ unsafe fn iox2_node_builder_drop(node_builder_handle: iox2_node_builder_h) {
     debug_assert!(!node_builder_handle.is_null());
 
     let node_builder = &mut *node_builder_handle.as_type();
-    std::ptr::drop_in_place(node_builder.value.as_option_mut());
+    core::ptr::drop_in_place(node_builder.value.as_option_mut());
     (node_builder.deleter)(node_builder);
 }
 

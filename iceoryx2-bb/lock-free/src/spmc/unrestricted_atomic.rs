@@ -17,7 +17,7 @@
 //!
 //! ```
 //! use iceoryx2_bb_lock_free::spmc::unrestricted_atomic::*;
-//! use std::sync::atomic::Ordering;
+//! use core::sync::atomic::Ordering;
 //!
 //! let atomic = UnrestrictedAtomic::<[u8; 1024]>::new([0u8; 1024]);
 //!
@@ -31,7 +31,7 @@
 //! let my_data = atomic.load();
 //! ```
 
-use std::{cell::UnsafeCell, fmt::Debug, mem::MaybeUninit, sync::atomic::Ordering};
+use core::{cell::UnsafeCell, fmt::Debug, mem::MaybeUninit, sync::atomic::Ordering};
 
 use iceoryx2_pal_concurrency_sync::iox_atomic::{IoxAtomicBool, IoxAtomicU32};
 
@@ -46,21 +46,21 @@ pub struct Producer<'a, T: Copy> {
     atomic: &'a UnrestrictedAtomic<T>,
 }
 
-impl<'a, T: Copy> Producer<'a, T> {
+impl<T: Copy> Producer<'_, T> {
     /// Stores a `new_value` inside the atomic.
     pub fn store(&self, new_value: T) {
         self.atomic.store(new_value);
     }
 }
 
-impl<'a, T: Copy> Drop for Producer<'a, T> {
+impl<T: Copy> Drop for Producer<'_, T> {
     fn drop(&mut self) {
         self.atomic.has_producer.store(true, Ordering::Relaxed);
     }
 }
 
-unsafe impl<'a, T: Copy> Send for Producer<'a, T> {}
-unsafe impl<'a, T: Copy> Sync for Producer<'a, T> {}
+unsafe impl<T: Copy> Send for Producer<'_, T> {}
+unsafe impl<T: Copy> Sync for Producer<'_, T> {}
 
 /// An atomic implementation where the underlying type has to by copyable but is otherwise
 /// unrestricted.
@@ -72,11 +72,11 @@ pub struct UnrestrictedAtomic<T: Copy> {
 }
 
 impl<T: Copy + Debug> Debug for UnrestrictedAtomic<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "UnrestrictedAtomic<{}> {{ write_cell: {}, data: {:?}, has_producer: {} }}",
-            std::any::type_name::<T>(),
+            core::any::type_name::<T>(),
             self.write_cell.load(Ordering::Relaxed),
             self.load(),
             self.has_producer.load(Ordering::Relaxed)

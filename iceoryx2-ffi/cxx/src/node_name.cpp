@@ -12,8 +12,6 @@
 
 #include "iox2/node_name.hpp"
 #include "iox/assertions.hpp"
-#include "iox/assertions_addendum.hpp"
-#include "iox/into.hpp"
 
 #include <cstring>
 
@@ -42,8 +40,7 @@ NodeName::~NodeName() {
     drop();
 }
 
-NodeName::NodeName(NodeName&& rhs) noexcept
-    : m_handle { nullptr } {
+NodeName::NodeName(NodeName&& rhs) noexcept {
     *this = std::move(rhs);
 }
 
@@ -57,8 +54,7 @@ auto NodeName::operator=(NodeName&& rhs) noexcept -> NodeName& {
     return *this;
 }
 
-NodeName::NodeName(const NodeName& rhs)
-    : m_handle { nullptr } {
+NodeName::NodeName(const NodeName& rhs) {
     *this = rhs;
 }
 
@@ -95,7 +91,7 @@ auto NodeName::create_impl(const char* value, size_t value_len) -> iox::expected
     iox2_node_name_h handle {};
     const auto ret_val = iox2_node_name_new(nullptr, value, value_len, &handle);
     if (ret_val == IOX2_OK) {
-        return iox::ok(std::move(NodeName { handle }));
+        return iox::ok(NodeName { handle });
     }
 
     return iox::err(iox::into<SemanticStringError>(ret_val));

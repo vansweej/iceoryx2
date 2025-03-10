@@ -10,6 +10,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+#![warn(clippy::alloc_instead_of_core)]
+#![warn(clippy::std_instead_of_alloc)]
+#![warn(clippy::std_instead_of_core)]
+
 pub mod communication_channel;
 pub mod dynamic_storage;
 pub mod event;
@@ -17,9 +21,13 @@ pub mod hash;
 pub mod monitoring;
 pub mod named_concept;
 pub mod reactor;
+pub mod resizable_shared_memory;
 pub mod serialize;
 pub mod shared_memory;
 pub mod shared_memory_directory;
 pub mod shm_allocator;
 pub mod static_storage;
 pub mod zero_copy_connection;
+
+#[doc(hidden)]
+pub mod testing;

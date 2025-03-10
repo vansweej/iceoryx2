@@ -14,14 +14,14 @@ use clap::Parser;
 use iceoryx2::{port::listener::Listener, prelude::*};
 use std::collections::HashMap;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn core::error::Error>> {
     let args = Args::parse();
 
     let node = NodeBuilder::new().create::<ipc::Service>()?;
 
     // factory lambda to create a listener with a given service name
     let create_listener =
-        |service: &String| -> Result<Listener<ipc::Service>, Box<dyn std::error::Error>> {
+        |service: &String| -> Result<Listener<ipc::Service>, Box<dyn core::error::Error>> {
             let event = node
                 .service_builder(&service.as_str().try_into()?)
                 .event()
@@ -69,6 +69,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("");
         }
+
+        CallbackProgression::Continue
     };
 
     // loops until the user has pressed CTRL+c, the application has received a SIGTERM or SIGINT
@@ -76,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // didn't add this to the example so feel free to play around with it.
     waitset.wait_and_process(on_event)?;
 
-    println!("Exit");
+    println!("exit");
 
     Ok(())
 }

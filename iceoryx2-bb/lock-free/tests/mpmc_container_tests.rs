@@ -44,6 +44,9 @@ unsafe impl Send for TestType {}
 
 #[generic_tests::define]
 mod mpmc_container {
+    use core::fmt::Debug;
+    use core::sync::atomic::AtomicU32;
+    use core::sync::atomic::Ordering;
     use iceoryx2_bb_elementary::bump_allocator::BumpAllocator;
     use iceoryx2_bb_elementary::relocatable_container::RelocatableContainer;
     use iceoryx2_bb_elementary::CallbackProgression;
@@ -55,9 +58,6 @@ mod mpmc_container {
     use iceoryx2_bb_testing::assert_that;
     use std::collections::HashMap;
     use std::collections::HashSet;
-    use std::fmt::Debug;
-    use std::sync::atomic::AtomicU32;
-    use std::sync::atomic::Ordering;
     use std::sync::{Barrier, Mutex};
     use std::thread;
 
@@ -131,7 +131,7 @@ mod mpmc_container {
         // case - hack required since `T` cannot be used in const operations
         let mut memory = [0u8; Container::<crate::TestType>::const_memory_size(129_usize)];
         let allocator = BumpAllocator::new(memory.as_mut_ptr() as usize);
-        let sut = unsafe { Container::<T>::new_uninit(CAPACITY) };
+        let mut sut = unsafe { Container::<T>::new_uninit(CAPACITY) };
         unsafe { assert_that!(sut.init(&allocator), is_ok) };
 
         let mut stored_indices = vec![];

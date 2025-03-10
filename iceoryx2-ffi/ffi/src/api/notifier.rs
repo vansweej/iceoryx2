@@ -20,17 +20,21 @@ use crate::api::{
 use iceoryx2::port::notifier::{Notifier, NotifierNotifyError};
 use iceoryx2::prelude::*;
 use iceoryx2_bb_elementary::static_assert::*;
+use iceoryx2_bb_elementary::AsCStr;
 use iceoryx2_ffi_macros::iceoryx2_ffi;
+use iceoryx2_ffi_macros::CStrRepr;
 
-use core::ffi::c_int;
+use core::ffi::{c_char, c_int};
 use core::mem::ManuallyDrop;
 
 // BEGIN types definition
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, CStrRepr)]
 pub enum iox2_notifier_notify_error_e {
     EVENT_ID_OUT_OF_BOUNDS = IOX2_OK as isize + 1,
+    MISSED_DEADLINE,
+    UNABLE_TO_ACQUIRE_ELAPSED_TIME,
 }
 
 impl IntoCInt for NotifierNotifyError {
@@ -38,6 +42,10 @@ impl IntoCInt for NotifierNotifyError {
         (match self {
             NotifierNotifyError::EventIdOutOfBounds => {
                 iox2_notifier_notify_error_e::EVENT_ID_OUT_OF_BOUNDS
+            }
+            NotifierNotifyError::MissedDeadline => iox2_notifier_notify_error_e::MISSED_DEADLINE,
+            NotifierNotifyError::UnableToAcquireElapsedTime => {
+                iox2_notifier_notify_error_e::UNABLE_TO_ACQUIRE_ELAPSED_TIME
             }
         }) as c_int
     }
@@ -129,6 +137,27 @@ impl HandleToType for iox2_notifier_h_ref {
 
 // BEGIN C API
 
+/// Returns a string literal describing the provided [`iox2_notifier_notify_error_e`].
+///
+/// # Arguments
+///
+/// * `error` - The error value for which a description should be returned
+///
+/// # Returns
+///
+/// A pointer to a null-terminated string containing the error message.
+/// The string is stored in the .rodata section of the binary.
+///
+/// # Safety
+///
+/// The returned pointer must not be modified or freed and is valid as long as the program runs.
+#[no_mangle]
+pub unsafe extern "C" fn iox2_notifier_notify_error_string(
+    error: iox2_notifier_notify_error_e,
+) -> *const c_char {
+    error.as_const_cstr().as_ptr() as *const c_char
+}
+
 /// Returns the unique port id of the notifier.
 ///
 /// # Safety
@@ -164,6 +193,40 @@ pub unsafe extern "C" fn iox2_notifier_id(
 
     (*storage_ptr).init(id, deleter);
     *id_handle_ptr = (*storage_ptr).as_handle();
+}
+
+/// Returns the deadline of the notifier's service. If there is a deadline set, the provided
+/// arguments `seconds` and `nanoseconds` will be set `true` is returned. Otherwise, false is
+/// returned and nothing is set.
+///
+/// # Safety
+///
+/// * `notifier_handle` is valid, non-null and was obtained via [`iox2_port_factory_listener_builder_create`](crate::iox2_port_factory_listener_builder_create)
+/// * `seconds` is pointing to a valid memory location and non-null
+/// * `nanoseconds` is pointing to a valid memory location and non-null
+#[no_mangle]
+pub unsafe extern "C" fn iox2_notifier_deadline(
+    notifier_handle: iox2_notifier_h_ref,
+    seconds: *mut u64,
+    nanoseconds: *mut u32,
+) -> bool {
+    notifier_handle.assert_non_null();
+    debug_assert!(!seconds.is_null());
+    debug_assert!(!nanoseconds.is_null());
+
+    let notifier = &mut *notifier_handle.as_type();
+
+    let deadline = match notifier.service_type {
+        iox2_service_type_e::IPC => notifier.value.as_mut().ipc.deadline(),
+        iox2_service_type_e::LOCAL => notifier.value.as_mut().local.deadline(),
+    };
+
+    deadline
+        .map(|v| {
+            *seconds = v.as_secs();
+            *nanoseconds = v.subsec_nanos();
+        })
+        .is_some()
 }
 
 /// Notifies all [`iox2_listener_h`](crate::iox2_listener_h) connected to the service

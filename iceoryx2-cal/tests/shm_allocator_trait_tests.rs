@@ -15,7 +15,9 @@ mod shm_allocator {
     use iceoryx2_bb_memory::bump_allocator::BumpAllocator;
     use iceoryx2_bb_testing::assert_that;
     use iceoryx2_cal::shm_allocator::{ShmAllocator, *};
-    use std::{alloc::Layout, collections::HashSet, ptr::NonNull, sync::Mutex};
+
+    use core::{alloc::Layout, ptr::NonNull};
+    use std::{collections::HashSet, sync::Mutex};
 
     use lazy_static::lazy_static;
 
@@ -105,7 +107,7 @@ mod shm_allocator {
 
         let layout = unsafe { Layout::from_size_align_unchecked(CHUNK_SIZE, 1) };
         let distance = unsafe { test.sut().allocate(layout).unwrap() };
-        assert_that!(distance.value(), eq 0);
+        assert_that!(distance.offset(), eq 0);
 
         unsafe { test.sut().deallocate(distance, layout) };
     }
@@ -149,7 +151,7 @@ mod shm_allocator {
         let mut test = TestFixture::<Sut>::new();
         test.prepare();
 
-        let sut = unsafe {
+        let mut sut = unsafe {
             Sut::new_uninit(
                 1,
                 NonNull::new_unchecked(test.memory.as_mut_slice()),

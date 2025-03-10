@@ -35,11 +35,9 @@ auto main() -> int {
     while (node.wait(CYCLE_TIME).has_value()) {
         auto sample = subscriber.receive().expect("receive succeeds");
         while (sample.has_value()) {
-            std::cout << "received " << sample->payload().size() << " bytes: ";
-            for (auto byte : sample->payload()) {
-                std::cout << std::hex << byte << " ";
-            }
-            std::cout << std::endl;
+            auto payload = sample->payload();
+            std::cout << "received " << std::dec << static_cast<int>(payload.number_of_bytes()) << " bytes"
+                      << std::endl;
             sample = subscriber.receive().expect("receive succeeds");
         }
     }

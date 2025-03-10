@@ -14,7 +14,7 @@
 #![allow(unused_variables)]
 
 use crate::posix::types::*;
-use std::{cell::Cell, ffi::CStr, fmt::Display};
+use core::{cell::Cell, ffi::CStr, fmt::Display};
 
 macro_rules! ErrnoEnumGenerator {
     (assign $($entry:ident = $value:expr),*; map $($map_entry:ident),*) => {
@@ -43,7 +43,7 @@ macro_rules! ErrnoEnumGenerator {
         }
 
         impl Display for Errno {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 const BUFFER_SIZE: usize = 1024;
                 let mut buffer: [c_char; BUFFER_SIZE] = [0; BUFFER_SIZE];
                 unsafe { strerror_r(*self as i32, buffer.as_mut_ptr(), BUFFER_SIZE) };
@@ -221,7 +221,7 @@ pub unsafe fn strerror_r(errnum: int, buf: *mut c_char, buflen: size_t) -> int {
         buflen
     }();
 
-    std::ptr::copy_nonoverlapping(error, buf, len);
+    core::ptr::copy_nonoverlapping(error, buf, len);
 
     0
 }
@@ -229,16 +229,14 @@ pub unsafe fn strerror_r(errnum: int, buf: *mut c_char, buflen: size_t) -> int {
 pub unsafe fn strerror(errnum: int) -> *const c_char {
     let errno: Errno = errnum.into();
     match errno {
-        Errno::EINVAL => "Invalid input argument value.\0".as_ptr() as *const c_char,
-        Errno::ENOSYS => "The feature is not defined and supported.\0".as_ptr() as *const c_char,
-        Errno::ETIMEDOUT => "A user-provided timeout was hit.\0".as_ptr() as *const c_char,
-        Errno::ENOENT => "A required system-resource does not exist.\0".as_ptr() as *const c_char,
-        Errno::ENOTSUP => {
-            "The feature is not supported on this system.\0".as_ptr() as *const c_char
-        }
+        Errno::EINVAL => c"Invalid input argument value.".as_ptr() as *const c_char,
+        Errno::ENOSYS => c"The feature is not defined and supported.".as_ptr() as *const c_char,
+        Errno::ETIMEDOUT => c"A user-provided timeout was hit.".as_ptr() as *const c_char,
+        Errno::ENOENT => c"A required system-resource does not exist.".as_ptr() as *const c_char,
+        Errno::ENOTSUP => c"The feature is not supported on this system.".as_ptr() as *const c_char,
         Errno::EBUSY => {
-            "The resource is currently busy and unaccessable.\0".as_ptr() as *const c_char
+            c"The resource is currently busy and unaccessable.".as_ptr() as *const c_char
         }
-        _ => "Unknown error has occurred.\0".as_ptr() as *const c_char,
+        _ => c"Unknown error has occurred.".as_ptr() as *const c_char,
     }
 }

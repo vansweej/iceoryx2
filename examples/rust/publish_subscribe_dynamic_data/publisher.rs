@@ -15,7 +15,7 @@ use iceoryx2::prelude::*;
 
 const CYCLE_TIME: Duration = Duration::from_secs(1);
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn core::error::Error>> {
     let node = NodeBuilder::new().create::<ipc::Service>()?;
 
     let service = node
@@ -23,24 +23,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .publish_subscribe::<[u8]>()
         .open_or_create()?;
 
-    let worst_case_memory_size = 1024;
     let publisher = service
         .publisher_builder()
-        .max_slice_len(worst_case_memory_size)
+        // We guess that the samples are at most 16 bytes in size.
+        // This is just a hint to the underlying allocator and is purely optional
+        // The better the guess is the less reallocations will be performed
+        .initial_max_slice_len(16)
+        // The underlying sample size will be increased with a power of two strategy
+        // when [`Publisher::loan_slice()`] or [`Publisher::loan_slice_uninit()`] require more
+        // memory than available.
+        .allocation_strategy(AllocationStrategy::PowerOfTwo)
         .create()?;
 
-    let mut counter = 1;
+    let mut counter = 0;
 
     while node.wait(CYCLE_TIME).is_ok() {
-        counter += 1;
-
-        let required_memory_size = (8 + counter) % 16;
+        let required_memory_size = (counter + 1) * (counter + 1);
         let sample = publisher.loan_slice_uninit(required_memory_size)?;
         let sample = sample.write_from_fn(|byte_idx| ((byte_idx + counter) % 255) as u8);
 
         sample.send()?;
 
-        println!("Send sample {} ...", counter);
+        println!(
+            "Send sample {} with {} bytes...",
+            counter, required_memory_size
+        );
+
+        counter += 1;
     }
 
     println!("exit");

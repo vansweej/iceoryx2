@@ -11,13 +11,18 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 mod node_name {
-    use iceoryx2::{config::DEFAULT_CONFIG_FILE, prelude::*};
+    use iceoryx2::prelude::*;
     use iceoryx2_bb_system_types::file_path::*;
     use iceoryx2_bb_system_types::path::*;
-    use iceoryx2_bb_testing::assert_that;
+    use iceoryx2_bb_testing::{assert_that, test_requires};
 
     #[test]
     fn config_file_settings_and_default_config_are_equal() {
+        // NOTE: The test is skipped when not run with cargo but with bazel,
+        //       since it does not work with the sandbox.
+        //       The CI which runs with cargo ensures that the settings are equal.
+        test_requires!(option_env!("CARGO").is_some());
+
         let default_config = Config::default();
         let top_level_dir = std::process::Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
@@ -28,7 +33,7 @@ mod node_name {
             Path::new(&top_level_dir.stdout.as_slice()[..top_level_dir.stdout.len() - 1]).unwrap();
 
         config_file_path
-            .add_path_entry(&Path::new(DEFAULT_CONFIG_FILE).unwrap())
+            .add_path_entry(&Config::default_config_file_path().into())
             .unwrap();
 
         let file_config =

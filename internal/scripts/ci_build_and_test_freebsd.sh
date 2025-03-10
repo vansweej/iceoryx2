@@ -51,10 +51,30 @@ done
 
 cd $(git rev-parse --show-toplevel)
 
+for n in $(seq 15 2000)
+do
+    if [ -z $LIBCLANG_PATH ]
+    then
+        if ! [ -d /usr/local/llvm${n}/lib ]
+        then
+            break
+        fi
+    fi
+
+    if [ -d /usr/local/llvm${n}/lib ]
+    then
+        export LIBCLANG_PATH=/usr/local/llvm${n}/lib/
+    fi
+done
+
+echo "###################"
+echo "# use libclang: ${LIBCLANG_PATH}"
+echo "###################"
+echo
+
 export PATH=$PATH:$HOME/.cargo/bin
-export LIBCLANG_PATH=/usr/local/llvm15/lib/
 rustup default $RUST_TOOLCHAIN
-export RUSTFLAGS="-C debug-assertions"
+# export RUSTFLAGS="-C debug-assertions"
 cargo fmt --all -- --check
 cargo clippy -- -D warnings
 
@@ -68,7 +88,7 @@ echo "######################"
 echo "# Run cargo nextest #"
 echo "#####################"
 
-cargo nextest run --workspace --no-fail-fast $RUST_BUILD_TYPE_FLAG
+cargo nextest run --workspace --all-targets --no-fail-fast $RUST_BUILD_TYPE_FLAG
 
 echo "###########################################################"
 echo "# Clean the target directory to reduce memory usage on VM #"

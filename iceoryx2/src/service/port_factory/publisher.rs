@@ -17,7 +17,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let pubsub = node.service_builder(&"My/Funk/ServiceName".try_into()?)
 //!     .publish_subscribe::<u64>()
@@ -37,7 +37,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let pubsub = node.service_builder(&"My/Funk/ServiceName".try_into()?)
 //!     .publish_subscribe::<[u64]>()
@@ -45,7 +45,7 @@
 //!
 //! let publisher = pubsub.publisher_builder()
 //!                     // allows to call Publisher::loan_slice() with up to 128 elements
-//!                     .max_slice_len(128)
+//!                     .initial_max_slice_len(128)
 //!                     .create()?;
 //!
 //! let sample = publisher.loan_slice(50)?;
@@ -54,9 +54,10 @@
 //! # }
 //! ```
 
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use iceoryx2_bb_log::fail;
+use iceoryx2_cal::shm_allocator::AllocationStrategy;
 use serde::{de::Visitor, Deserialize, Serialize};
 
 use super::publish_subscribe::PortFactory;
@@ -94,10 +95,10 @@ impl Serialize for UnableToDeliverStrategy {
 
 struct UnableToDeliverStrategyVisitor;
 
-impl<'de> Visitor<'de> for UnableToDeliverStrategyVisitor {
+impl Visitor<'_> for UnableToDeliverStrategyVisitor {
     type Value = UnableToDeliverStrategy;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
         formatter.write_str("a string containing either 'Block' or 'DiscardSample'")
     }
 
@@ -130,7 +131,8 @@ pub(crate) struct LocalPublisherConfig {
     pub(crate) max_loaned_samples: usize,
     pub(crate) unable_to_deliver_strategy: UnableToDeliverStrategy,
     pub(crate) degration_callback: Option<DegrationCallback<'static>>,
-    pub(crate) max_slice_len: usize,
+    pub(crate) initial_max_slice_len: usize,
+    pub(crate) allocation_strategy: AllocationStrategy,
 }
 
 /// Factory to create a new [`Publisher`] port/endpoint for
@@ -153,8 +155,9 @@ impl<'factory, Service: service::Service, Payload: Debug + ?Sized, UserHeader: D
     pub(crate) fn new(factory: &'factory PortFactory<Service, Payload, UserHeader>) -> Self {
         Self {
             config: LocalPublisherConfig {
+                allocation_strategy: AllocationStrategy::Static,
                 degration_callback: None,
-                max_slice_len: 1,
+                initial_max_slice_len: 1,
                 max_loaned_samples: factory
                     .service
                     .__internal_state()
@@ -222,13 +225,22 @@ impl<'factory, Service: service::Service, Payload: Debug + ?Sized, UserHeader: D
     }
 }
 
-impl<'factory, Service: service::Service, Payload: Debug, UserHeader: Debug>
-    PortFactoryPublisher<'factory, Service, [Payload], UserHeader>
+impl<Service: service::Service, Payload: Debug, UserHeader: Debug>
+    PortFactoryPublisher<'_, Service, [Payload], UserHeader>
 {
     /// Sets the maximum slice length that a user can allocate with
     /// [`Publisher::loan_slice()`] or [`Publisher::loan_slice_uninit()`].
-    pub fn max_slice_len(mut self, value: usize) -> Self {
-        self.config.max_slice_len = value;
+    pub fn initial_max_slice_len(mut self, value: usize) -> Self {
+        self.config.initial_max_slice_len = value;
+        self
+    }
+
+    /// Defines the allocation strategy that is used when the provided
+    /// [`PortFactoryPublisher::initial_max_slice_len()`] is exhausted. This happens when the user
+    /// acquires a more than max slice len in [`Publisher::loan_slice()`] or
+    /// [`Publisher::loan_slice_uninit()`].
+    pub fn allocation_strategy(mut self, value: AllocationStrategy) -> Self {
+        self.config.allocation_strategy = value;
         self
     }
 }

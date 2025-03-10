@@ -15,6 +15,9 @@
 
 use crate::posix::types::*;
 
+pub const GLOBAL_CONFIG_PATH: &str = "C:/ProgramData";
+pub const USER_CONFIG_PATH: &str = ".config";
+
 pub const CPU_SETSIZE: usize = core::mem::size_of::<usize>() * 8;
 pub const MAX_NUMBER_OF_THREADS: usize = 1024;
 pub const FD_SETSIZE: usize = windows_sys::Win32::Networking::WinSock::FD_SETSIZE as _;
@@ -48,8 +51,7 @@ pub const PROT_EXEC: int = 8;
 pub const MCL_CURRENT: int = 16;
 pub const MCL_FUTURE: int = 32;
 pub const MAP_SHARED: int = 64;
-pub const MAP_FAILED: *mut void = u64::MAX as *mut void;
-pub const MQ_INVALID: mqd_t = mqd_t::MAX;
+pub const MAP_FAILED: *mut void = 0 as *mut void;
 
 pub const PTHREAD_MUTEX_NORMAL: int = 1;
 pub const PTHREAD_MUTEX_RECURSIVE: int = 2;
@@ -61,11 +63,11 @@ pub const PTHREAD_PROCESS_SHARED: int = 64;
 pub const PTHREAD_PRIO_NONE: int = 128;
 pub const PTHREAD_PRIO_INHERIT: int = 256;
 pub const PTHREAD_PRIO_PROTECT: int = 512;
-pub const PTHREAD_SCOPE_SYSTEM: int = 1024;
-pub const PTHREAD_SCOPE_PROCESS: int = 2048;
+
 pub const PTHREAD_PREFER_READER_NP: int = 4096;
 pub const PTHREAD_PREFER_WRITER_NP: int = 8192;
 pub const PTHREAD_PREFER_WRITER_NONRECURSIVE_NP: int = 16384;
+
 pub const PTHREAD_BARRIER_SERIAL_THREAD: int = 32768;
 pub const PTHREAD_EXPLICIT_SCHED: int = 65536;
 pub const PTHREAD_INHERIT_SCHED: int = 131072;
@@ -128,7 +130,6 @@ pub const SIGVTALRM: int = 24;
 pub const SIGXCPU: int = 25;
 pub const SIGXFSZ: int = 26;
 pub const SIG_ERR: sighandler_t = sighandler_t::MAX;
-pub const SIGPOLL: int = 27;
 pub const SIG_DFL: int = 0;
 pub const SIG_IGN: int = 1;
 pub const SA_RESTART: int = 1;

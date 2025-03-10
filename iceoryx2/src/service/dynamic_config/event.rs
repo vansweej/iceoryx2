@@ -15,7 +15,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let event = node.service_builder(&"MyEventName".try_into()?)
 //!     .event()
@@ -30,6 +30,7 @@ use iceoryx2_bb_elementary::relocatable_container::RelocatableContainer;
 use iceoryx2_bb_lock_free::mpmc::{container::*, unique_index_set::ReleaseMode};
 use iceoryx2_bb_log::fatal_panic;
 use iceoryx2_bb_memory::bump_allocator::BumpAllocator;
+use iceoryx2_pal_concurrency_sync::iox_atomic::IoxAtomicU64;
 
 use crate::{
     node::NodeId,
@@ -38,6 +39,7 @@ use crate::{
 
 use super::PortCleanupAction;
 
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DynamicConfigSettings {
     pub number_of_listeners: usize,
@@ -46,22 +48,28 @@ pub(crate) struct DynamicConfigSettings {
 
 /// The dynamic configuration of an [`crate::service::messaging_pattern::MessagingPattern::Event`]
 /// based service. Contains dynamic parameters like the connected endpoints etc..
+#[repr(C)]
 #[derive(Debug)]
 pub struct DynamicConfig {
     pub(crate) listeners: Container<ListenerDetails>,
     pub(crate) notifiers: Container<NotifierDetails>,
+    pub(crate) elapsed_time_since_last_notification: IoxAtomicU64,
 }
 
+#[doc(hidden)]
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ListenerDetails {
-    pub(crate) listener_id: UniqueListenerId,
-    pub(crate) node_id: NodeId,
+pub struct ListenerDetails {
+    pub listener_id: UniqueListenerId,
+    pub node_id: NodeId,
 }
 
+#[doc(hidden)]
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct NotifierDetails {
-    pub(crate) notifier_id: UniqueNotifierId,
-    pub(crate) node_id: NodeId,
+pub struct NotifierDetails {
+    pub notifier_id: UniqueNotifierId,
+    pub node_id: NodeId,
 }
 
 impl DynamicConfig {
@@ -69,10 +77,11 @@ impl DynamicConfig {
         Self {
             listeners: unsafe { Container::new_uninit(config.number_of_listeners) },
             notifiers: unsafe { Container::new_uninit(config.number_of_notifiers) },
+            elapsed_time_since_last_notification: IoxAtomicU64::new(0),
         }
     }
 
-    pub(crate) unsafe fn init(&self, allocator: &BumpAllocator) {
+    pub(crate) unsafe fn init(&mut self, allocator: &BumpAllocator) {
         fatal_panic!(from "event::DynamicConfig::init",
             when self.listeners.init(allocator),
             "This should never happen! Unable to initialize listener port id container.");
@@ -97,21 +106,21 @@ impl DynamicConfig {
     }
 
     #[doc(hidden)]
-    pub fn __internal_listener_owners<F: FnMut(&NodeId)>(&self, mut callback: F) {
+    pub fn __internal_list_listeners<F: FnMut(&ListenerDetails)>(&self, mut callback: F) {
         let state = unsafe { self.listeners.get_state() };
 
         state.for_each(|_, details| {
-            callback(&details.node_id);
+            callback(details);
             CallbackProgression::Continue
         });
     }
 
     #[doc(hidden)]
-    pub fn __internal_notifier_owners<F: FnMut(&NodeId)>(&self, mut callback: F) {
+    pub fn __internal_list_notifiers<F: FnMut(&NotifierDetails)>(&self, mut callback: F) {
         let state = unsafe { self.notifiers.get_state() };
 
         state.for_each(|_, details| {
-            callback(&details.node_id);
+            callback(details);
             CallbackProgression::Continue
         });
     }

@@ -65,12 +65,11 @@
 //! }
 //! ```
 
-pub mod message_queue;
 pub mod posix_shared_memory;
 pub mod process_local;
 pub mod unix_datagram;
 
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use iceoryx2_bb_system_types::file_name::*;
 use iceoryx2_bb_system_types::path::Path;

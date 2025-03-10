@@ -14,7 +14,7 @@
 //!
 //! ```
 //! use iceoryx2::prelude::*;
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let event = node.service_builder(&"MyEventName".try_into()?)
 //!     .event()
@@ -51,10 +51,11 @@ use iceoryx2_bb_lock_free::mpmc::container::{ContainerHandle, ContainerState};
 use iceoryx2_bb_log::{debug, fail, warn};
 use iceoryx2_cal::{dynamic_storage::DynamicStorage, event::NotifierBuilder};
 use iceoryx2_cal::{event::Event, named_concept::NamedConceptBuilder};
-use std::{
-    cell::UnsafeCell,
-    sync::{atomic::Ordering, Arc},
-};
+
+use core::{cell::UnsafeCell, sync::atomic::Ordering, time::Duration};
+
+extern crate alloc;
+use alloc::sync::Arc;
 
 /// Failures that can occur when a new [`Notifier`] is created with the
 /// [`crate::service::port_factory::notifier::PortFactoryNotifier`].
@@ -67,13 +68,13 @@ pub enum NotifierCreateError {
     ExceedsMaxSupportedNotifiers,
 }
 
-impl std::fmt::Display for NotifierCreateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for NotifierCreateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "NotifierCreateError::{:?}", self)
     }
 }
 
-impl std::error::Error for NotifierCreateError {}
+impl core::error::Error for NotifierCreateError {}
 
 /// Defines the failures that can occur while a [`Notifier::notify()`] call.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -82,15 +83,22 @@ pub enum NotifierNotifyError {
     /// is greater than the maximum supported [`EventId`] by the
     /// [`Service`](crate::service::Service)
     EventIdOutOfBounds,
+    /// The notification was delivered to all [`Listener`](crate::port::listener::Listener) ports
+    /// but the deadline contract, the maximum time span between two notifications, of the
+    /// [`Service`](crate::service::Service) was violated.
+    MissedDeadline,
+    /// The notification was delivered but the elapsed system time could not be acquired.
+    /// Therefore, it is unknown if the deadline was missed or not.
+    UnableToAcquireElapsedTime,
 }
 
-impl std::fmt::Display for NotifierNotifyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for NotifierNotifyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "NotifierNotifyError::{:?}", self)
     }
 }
 
-impl std::error::Error for NotifierNotifyError {}
+impl core::error::Error for NotifierNotifyError {}
 
 #[derive(Debug)]
 struct Connection<Service: service::Service> {
@@ -147,6 +155,9 @@ impl<Service: service::Service> ListenerConnections<Service> {
                 Err(iceoryx2_cal::event::NotifierCreateError::InsufficientPermissions) => {
                     warn!(from self, "{} since the permissions do not match. The service or the participants are maybe misconfigured.", msg);
                 }
+                Err(iceoryx2_cal::event::NotifierCreateError::Interrupt) => {
+                    debug!(from self, "{} since an interrupt signal was received.", msg);
+                }
                 Err(iceoryx2_cal::event::NotifierCreateError::InternalFailure) => {
                     debug!(from self, "{} due to an internal failure.", msg);
                 }
@@ -181,10 +192,18 @@ pub struct Notifier<Service: service::Service> {
     event_id_max_value: usize,
     dynamic_notifier_handle: Option<ContainerHandle>,
     notifier_id: UniqueNotifierId,
+    on_drop_notification: Option<EventId>,
 }
 
 impl<Service: service::Service> Drop for Notifier<Service> {
     fn drop(&mut self) {
+        if let Some(event_id) = self.on_drop_notification {
+            if let Err(e) = self.notify_with_custom_event_id(event_id) {
+                warn!(from self, "Unable to send notifier_dropped_event {:?} due to ({:?}).",
+                    event_id, e);
+            }
+        }
+
         if let Some(handle) = self.dynamic_notifier_handle {
             self.listener_connections
                 .service_state
@@ -201,6 +220,33 @@ impl<Service: service::Service> Notifier<Service> {
         service: &Service,
         default_event_id: EventId,
     ) -> Result<Self, NotifierCreateError> {
+        let mut new_self = Self::new_without_auto_event_emission(service, default_event_id)?;
+
+        let static_config = service.__internal_state().static_config.event();
+        new_self.on_drop_notification = static_config.notifier_dropped_event.map(EventId::new);
+
+        if let Some(event_id) = static_config.notifier_created_event() {
+            match new_self.notify_with_custom_event_id(event_id) {
+                Ok(_)
+                | Err(
+                    NotifierNotifyError::MissedDeadline
+                    | NotifierNotifyError::UnableToAcquireElapsedTime,
+                ) => (),
+                Err(e) => {
+                    warn!(from new_self,
+                        "The new notifier was unable to send out the notifier_created_event: {:?} due to ({:?}).",
+                        event_id, e);
+                }
+            }
+        }
+
+        Ok(new_self)
+    }
+
+    pub(crate) fn new_without_auto_event_emission(
+        service: &Service,
+        default_event_id: EventId,
+    ) -> Result<Self, NotifierCreateError> {
         let msg = "Unable to create Notifier port";
         let origin = "Notifier::new()";
         let notifier_id = UniqueNotifierId::new();
@@ -212,6 +258,7 @@ impl<Service: service::Service> Notifier<Service> {
             .event()
             .listeners;
 
+        let static_config = service.__internal_state().static_config.event();
         let mut new_self = Self {
             listener_connections: ListenerConnections::new(
                 listener_list.capacity(),
@@ -219,18 +266,15 @@ impl<Service: service::Service> Notifier<Service> {
             ),
             default_event_id,
             listener_list_state: unsafe { UnsafeCell::new(listener_list.get_state()) },
-            event_id_max_value: service
-                .__internal_state()
-                .static_config
-                .event()
-                .event_id_max_value,
+            event_id_max_value: static_config.event_id_max_value,
             dynamic_notifier_handle: None,
             notifier_id,
+            on_drop_notification: None,
         };
 
         new_self.populate_listener_channels();
 
-        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
 
         // !MUST! be the last task otherwise a notifier is added to the dynamic config without
         // the creation of all required channels
@@ -318,6 +362,16 @@ impl<Service: service::Service> Notifier<Service> {
         self.notify_with_custom_event_id(self.default_event_id)
     }
 
+    /// Returns the deadline of the corresponding [`Service`](crate::service::Service).
+    pub fn deadline(&self) -> Option<Duration> {
+        self.listener_connections
+            .service_state
+            .static_config
+            .event()
+            .deadline
+            .map(|v| v.value)
+    }
+
     /// Notifies all [`crate::port::listener::Listener`] connected to the service with a custom
     /// [`EventId`].
     /// On success the number of
@@ -353,6 +407,39 @@ impl<Service: service::Service> Notifier<Service> {
                         number_of_triggered_listeners += 1;
                     }
                 }
+            }
+        }
+
+        if let Some(deadline) = self
+            .listener_connections
+            .service_state
+            .static_config
+            .event()
+            .deadline
+        {
+            let msg = "The notification was sent";
+            let duration_since_creation = fail!(from self, when deadline.creation_time.elapsed(),
+                                with NotifierNotifyError::UnableToAcquireElapsedTime,
+                                "{} but the elapsed system time could not be acquired which is required for deadline handling.",
+                                msg);
+
+            let previous_duration_since_creation = self
+                .listener_connections
+                .service_state
+                .dynamic_storage
+                .get()
+                .event()
+                .elapsed_time_since_last_notification
+                .swap(duration_since_creation.as_nanos() as u64, Ordering::Relaxed);
+
+            let duration_since_last_notification = Duration::from_nanos(
+                duration_since_creation.as_nanos() as u64 - previous_duration_since_creation,
+            );
+
+            if deadline.value < duration_since_last_notification {
+                fail!(from self, with NotifierNotifyError::MissedDeadline,
+                "{} but the deadline was hit. The service requires a notification after {:?} but {:?} passed without a notification.",
+                msg, deadline.value, duration_since_last_notification);
             }
         }
 

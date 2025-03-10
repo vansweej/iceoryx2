@@ -52,17 +52,17 @@
 //!
 //! SignalHandler::wait_for_signal(NonFatalFetchableSignal::Terminate);
 //! ```
-use std::{
+use core::{
     fmt::{Debug, Display},
     time::Duration,
 };
 
 use crate::{
     adaptive_wait::*,
-    clock::{NanosleepError, Time, TimeError},
-    file_lock::ClockType,
+    clock::{ClockType, NanosleepError, Time, TimeError},
     mutex::*,
 };
+use core::sync::atomic::Ordering;
 use enum_iterator::{all, Sequence};
 use iceoryx2_bb_elementary::enum_gen;
 use iceoryx2_bb_log::{fail, fatal_panic};
@@ -70,8 +70,6 @@ use iceoryx2_pal_concurrency_sync::iox_atomic::IoxAtomicUsize;
 use iceoryx2_pal_posix::posix::{Errno, Struct};
 use iceoryx2_pal_posix::*;
 use lazy_static::lazy_static;
-use std::sync::atomic::Ordering;
-use tiny_fn::tiny_fn;
 
 macro_rules! define_signals {
     {fetchable: $($entry:ident = $nn:ident::$value:ident),*
@@ -102,7 +100,7 @@ macro_rules! define_signals {
         #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Sequence)]
         #[repr(i32)]
         pub enum FatalFetchableSignal {
-          $($fatal_entry = $fatal_nn::$value),*,
+          $($fatal_entry = $fatal_nn::$fatal_value),*,
         }
 
         enum_gen! {
@@ -193,7 +191,6 @@ define_signals! {
     BackgroundProcessReadAttempt = posix::SIGTTIN,
     BackgroundProcessWriteAttempt = posix::SIGTTOU,
     UserDefined1 = posix::SIGUSR1,
-    PollableEvent = posix::SIGPOLL,
     ProfilingTimerExpired = posix::SIGPROF,
     UrgentDataAvailableAtSocket = posix::SIGURG,
     VirtualTimerExpired = posix::SIGVTALRM
@@ -240,11 +237,6 @@ enum_gen! {
     FailedToWait <= SignalWaitError
 }
 
-tiny_fn! {
-    /// A callable which is called inside a signal handler. Only signal safe calls are allowed.
-    pub struct SignalCallback = Fn(signal: FetchableSignal);
-}
-
 #[derive(Debug)]
 struct SignalDetail {
     signal: FetchableSignal,
@@ -282,20 +274,19 @@ static LAST_SIGNAL: IoxAtomicUsize = IoxAtomicUsize::new(posix::MAX_SIGNAL_VALUE
 /// This class must be a singleton class otherwise one could register multiple signal handlers
 /// for the same signal.
 pub struct SignalHandler {
-    registered_signals: [Option<SignalCallback<'static>>; posix::MAX_SIGNAL_VALUE],
-    empty_callback: Option<SignalCallback<'static>>,
+    registered_signals: [Option<&'static dyn Fn(FetchableSignal)>; posix::MAX_SIGNAL_VALUE],
     do_repeat_eintr_call: bool,
 }
 unsafe impl Send for SignalHandler {}
 
 impl Debug for SignalHandler {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Display::fmt(&self, f)
     }
 }
 
 impl Display for SignalHandler {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut registered_signals: Vec<FetchableSignal> = vec![];
         for i in 0..posix::MAX_SIGNAL_VALUE {
             if self.registered_signals[i].is_some() {
@@ -312,8 +303,8 @@ impl Display for SignalHandler {
 
 extern "C" fn handler(signal: posix::int) {
     capture_signal(signal);
-    if let Some(c) = SignalHandler::instance().get_callback_for_signal(signal) {
-        c.call(signal.into());
+    if let Some(callback) = SignalHandler::instance().get_callback_for_signal(signal) {
+        callback(signal.into());
     }
 }
 
@@ -451,7 +442,7 @@ impl SignalHandler {
     /// raised it returns true otherwise false.
     /// ```ignore
     /// use iceoryx2_bb_posix::signal::*;
-    /// use std::time::Duration;
+    /// use core::time::Duration;
     ///
     /// let result = SignalHandler::timed_wait_for_signal(
     ///                     FetchableSignal::Terminate, Duration::from_millis(10)).unwrap();
@@ -531,7 +522,6 @@ impl SignalHandler {
     fn new() -> Self {
         let mut sighandle = SignalHandler {
             registered_signals: core::array::from_fn(|_| None),
-            empty_callback: None,
             do_repeat_eintr_call: false,
         };
 
@@ -554,24 +544,23 @@ impl SignalHandler {
             "Unable to acquire global SignalHandler")
     }
 
-    fn get_callback_for_signal(&self, signal: posix::int) -> &Option<SignalCallback<'static>> {
+    fn get_callback_for_signal(
+        &self,
+        signal: posix::int,
+    ) -> &Option<&'static dyn Fn(FetchableSignal)> {
         if signal as usize >= posix::MAX_SIGNAL_VALUE {
-            return &self.empty_callback;
+            return &None;
         }
 
         &self.registered_signals[signal as usize]
     }
 
     fn register_signal_from_state(&mut self, details: SignalDetail) -> posix::sigaction_t {
-        let adjusted_state = posix::sigaction_t {
-            iox2_sa_handler: details.state.iox2_sa_handler,
-            iox2_sa_flags: if self.do_repeat_eintr_call {
-                posix::SA_RESTART
-            } else {
-                0
-            },
-            iox2_sa_mask: details.state.iox2_sa_mask,
-        };
+        let mut adjusted_state = details.state;
+        if self.do_repeat_eintr_call {
+            adjusted_state.set_flags(adjusted_state.flags() | posix::SA_RESTART);
+        }
+
         let mut previous_action = posix::sigaction_t::new();
 
         let sigaction_return = unsafe {
@@ -592,7 +581,7 @@ impl SignalHandler {
         callback: posix::sighandler_t,
     ) -> posix::sigaction_t {
         let mut action = posix::sigaction_t::new();
-        action.iox2_sa_handler = callback;
+        action.set_handler(callback);
         self.register_signal_from_state(SignalDetail::new(signal, action))
     }
 
@@ -606,7 +595,7 @@ impl SignalHandler {
         }
 
         let previous_action = self.register_raw_signal(signal, handler as posix::sighandler_t);
-        self.registered_signals[signal as usize] = Some(SignalCallback::new(callback));
+        self.registered_signals[signal as usize] = Some(callback);
 
         Ok(previous_action)
     }

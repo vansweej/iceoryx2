@@ -10,6 +10,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+#![warn(clippy::alloc_instead_of_core)]
+#![warn(clippy::std_instead_of_alloc)]
+#![warn(clippy::std_instead_of_core)]
+
 //! Contains helper derive macros for iceoryx2.
 
 extern crate proc_macro;
@@ -24,7 +28,8 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields};
 /// ```
 /// use iceoryx2_bb_derive_macros::PlacementDefault;
 /// use iceoryx2_bb_elementary::placement_default::PlacementDefault;
-/// use std::alloc::{alloc, dealloc, Layout};
+/// use core::alloc::Layout;
+/// use std::alloc::{alloc, dealloc};
 ///
 /// #[derive(PlacementDefault)]
 /// struct MyLargeType {
@@ -41,7 +46,6 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields};
 ///
 /// unsafe { core::ptr::drop_in_place(raw_memory) };
 /// unsafe { dealloc(raw_memory.cast(), layout) };
-
 /// ```
 #[proc_macro_derive(PlacementDefault)]
 pub fn placement_default_derive(input: TokenStream) -> TokenStream {

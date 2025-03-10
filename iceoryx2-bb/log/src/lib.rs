@@ -10,6 +10,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+#![warn(clippy::alloc_instead_of_core)]
+#![warn(clippy::std_instead_of_alloc)]
+#![warn(clippy::std_instead_of_core)]
+
 //! Simplistic logger. It has 6 [`LogLevel`]s which can be set via [`set_log_level()`] and read via
 //! [`get_log_level()`].
 //!
@@ -145,12 +149,9 @@ pub mod fail;
 pub mod logger;
 
 use iceoryx2_pal_concurrency_sync::iox_atomic::IoxAtomicU8;
-use std::{
-    fmt::Arguments,
-    sync::{atomic::Ordering, Once},
-};
 
-use logger::Logger;
+use core::{fmt::Arguments, sync::atomic::Ordering};
+use std::sync::Once;
 
 #[cfg(feature = "logger_tracing")]
 static DEFAULT_LOGGER: logger::tracing::Logger = logger::tracing::Logger::new();
@@ -163,9 +164,14 @@ static DEFAULT_LOGGER: logger::console::Logger = logger::console::Logger::new();
 
 const DEFAULT_LOG_LEVEL: u8 = LogLevel::Info as u8;
 
-static mut LOGGER: Option<&'static dyn logger::Logger> = None;
+static mut LOGGER: Option<&'static dyn Log> = None;
 static LOG_LEVEL: IoxAtomicU8 = IoxAtomicU8::new(DEFAULT_LOG_LEVEL);
 static INIT: Once = Once::new();
+
+pub trait Log: Send + Sync {
+    /// logs a message
+    fn log(&self, log_level: LogLevel, origin: Arguments, formatted_message: Arguments);
+}
 
 /// Describes the log level.
 #[repr(u8)]
@@ -190,9 +196,9 @@ pub fn get_log_level() -> u8 {
     LOG_LEVEL.load(Ordering::Relaxed)
 }
 
-/// Sets the [`Logger`]. Can be only called once at the beginning of the program. If the
-/// [`Logger`] is already set it returns false and does not update it.
-pub fn set_logger<T: logger::Logger + 'static>(value: &'static T) -> bool {
+/// Sets the [`Log`]ger. Can be only called once at the beginning of the program. If the
+/// [`Log`]ger is already set it returns false and does not update it.
+pub fn set_logger<T: Log + 'static>(value: &'static T) -> bool {
     let mut set_logger_success = false;
     INIT.call_once(|| {
         unsafe { LOGGER = Some(value) };
@@ -202,16 +208,32 @@ pub fn set_logger<T: logger::Logger + 'static>(value: &'static T) -> bool {
     set_logger_success
 }
 
-/// Returns a reference to the [`Logger`].
-pub fn get_logger() -> &'static dyn Logger {
+/// Returns a reference to the [`Log`]ger.
+pub fn get_logger() -> &'static dyn Log {
     INIT.call_once(|| {
         unsafe { LOGGER = Some(&DEFAULT_LOGGER) };
     });
 
-    unsafe { *LOGGER.as_ref().unwrap() }
+    // # From The Compiler
+    //
+    // shared references to mutable statics are dangerous; it's undefined behavior
+    //   1. if the static is mutated or
+    //   2. if a mutable reference is created for it while the shared reference lives
+    //
+    // # Safety
+    //
+    // 1. The logger is always an immutable threadsafe object with only interior mutability.
+    // 2. [`std::sync::Once`] is used to ensure it can only mutated on initialization and the
+    //    lifetime is `'static`.
+    #[allow(static_mut_refs)]
+    unsafe {
+        *LOGGER.as_ref().unwrap()
+    }
 }
 
 #[doc(hidden)]
 pub fn __internal_print_log_msg(log_level: LogLevel, origin: Arguments, args: Arguments) {
-    get_logger().log(log_level, origin, args)
+    if get_log_level() <= log_level as u8 {
+        get_logger().log(log_level, origin, args)
+    }
 }

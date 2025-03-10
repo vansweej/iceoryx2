@@ -21,18 +21,20 @@ use crate::iox2_file_descriptor_ptr;
 use iceoryx2::port::listener::Listener;
 use iceoryx2::prelude::*;
 use iceoryx2_bb_elementary::static_assert::*;
+use iceoryx2_bb_elementary::AsCStr;
 use iceoryx2_bb_posix::file_descriptor::{FileDescriptor, FileDescriptorBased};
 use iceoryx2_cal::event::ListenerWaitError;
 use iceoryx2_ffi_macros::iceoryx2_ffi;
+use iceoryx2_ffi_macros::CStrRepr;
 
-use core::ffi::c_int;
+use core::ffi::{c_char, c_int};
 use core::mem::ManuallyDrop;
 use core::time::Duration;
 
 // BEGIN types definition
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, CStrRepr)]
 pub enum iox2_listener_wait_error_e {
     CONTRACT_VIOLATION = IOX2_OK as isize + 1,
     INTERNAL_FAILURE,
@@ -137,6 +139,27 @@ pub type iox2_listener_wait_all_callback =
 // END type definition
 
 // BEGIN C API
+
+/// Returns a string representation of the provided [`iox2_listener_wait_error_e`] error code.
+///
+/// # Arguments
+///
+/// * `error` - The error code that should be converted into a string
+///
+/// # Returns
+///
+/// A pointer to a null-terminated string containing the error message.
+/// The string is stored in the .rodata section of the binary.
+///
+/// # Safety
+///
+/// * The returned pointer must not be modified or freed and is only valid as long as the program runs
+#[no_mangle]
+pub unsafe extern "C" fn iox2_listener_wait_error_string(
+    error: iox2_listener_wait_error_e,
+) -> *const c_char {
+    error.as_const_cstr().as_ptr() as *const c_char
+}
 
 /// This function needs to be called to destroy the listener!
 ///
@@ -319,6 +342,40 @@ pub unsafe extern "C" fn iox2_listener_id(
 
     (*storage_ptr).init(id, deleter);
     *id_handle_ptr = (*storage_ptr).as_handle();
+}
+
+/// Returns the deadline of the listener's service. If there is a deadline set, the provided
+/// arguments `seconds` and `nanoseconds` will be set `true` is returned. Otherwise, false is
+/// returned and nothing is set.
+///
+/// # Safety
+///
+/// * `listener_handle` is valid, non-null and was obtained via [`iox2_port_factory_listener_builder_create`](crate::iox2_port_factory_listener_builder_create)
+/// * `seconds` is pointing to a valid memory location and non-null
+/// * `nanoseconds` is pointing to a valid memory location and non-null
+#[no_mangle]
+pub unsafe extern "C" fn iox2_listener_deadline(
+    listener_handle: iox2_listener_h_ref,
+    seconds: *mut u64,
+    nanoseconds: *mut u32,
+) -> bool {
+    listener_handle.assert_non_null();
+    debug_assert!(!seconds.is_null());
+    debug_assert!(!nanoseconds.is_null());
+
+    let listener = &mut *listener_handle.as_type();
+
+    let deadline = match listener.service_type {
+        iox2_service_type_e::IPC => listener.value.as_mut().ipc.deadline(),
+        iox2_service_type_e::LOCAL => listener.value.as_mut().local.deadline(),
+    };
+
+    deadline
+        .map(|v| {
+            *seconds = v.as_secs();
+            *nanoseconds = v.subsec_nanos();
+        })
+        .is_some()
 }
 
 /// Blocks the listener until at least one event was received and then calls the callback for

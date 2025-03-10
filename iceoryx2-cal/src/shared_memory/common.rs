@@ -10,9 +10,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use std::marker::PhantomData;
-use std::mem::MaybeUninit;
-use std::{alloc::Layout, fmt::Debug};
+use core::marker::PhantomData;
+use core::mem::MaybeUninit;
+use core::{alloc::Layout, fmt::Debug};
 
 use crate::dynamic_storage::*;
 pub use crate::shared_memory::*;
@@ -30,6 +30,7 @@ use crate::static_storage::file::{
 #[doc(hidden)]
 pub mod details {
     use iceoryx2_bb_memory::bump_allocator::BumpAllocator;
+    use pool_allocator::PoolAllocator;
 
     use super::*;
 
@@ -187,7 +188,7 @@ pub mod details {
                 Allocator::new_uninit(SystemInfo::PageSize.value(), memory, allocator_config)
             });
 
-            if let Err(e) = unsafe { details.allocator.assume_init_ref().init(init_allocator) } {
+            if let Err(e) = unsafe { details.allocator.assume_init_mut().init(init_allocator) } {
                 debug!(from self, "{} since the management memory for the allocator could not be initialized ({:?}).", msg, e);
                 false
             } else {
@@ -384,6 +385,15 @@ pub mod details {
     }
 
     impl<Allocator: ShmAllocator + Debug, Storage: DynamicStorage<AllocatorDetails<Allocator>>>
+        crate::shared_memory::details::SharedMemoryLowLevelAPI<Allocator>
+        for Memory<Allocator, Storage>
+    {
+        fn allocator(&self) -> &Allocator {
+            unsafe { self.storage.get().allocator.assume_init_ref() }
+        }
+    }
+
+    impl<Allocator: ShmAllocator + Debug, Storage: DynamicStorage<AllocatorDetails<Allocator>>>
         crate::shared_memory::SharedMemory<Allocator> for Memory<Allocator, Storage>
     {
         type Builder = Builder<Allocator, Storage>;
@@ -412,17 +422,17 @@ pub mod details {
             unsafe { self.storage.get().allocator.assume_init_ref() }.max_alignment()
         }
 
-        fn allocate(&self, layout: std::alloc::Layout) -> Result<ShmPointer, ShmAllocationError> {
+        fn allocate(&self, layout: core::alloc::Layout) -> Result<ShmPointer, ShmAllocationError> {
             let offset = fail!(from self, when unsafe { self.storage.get().allocator.assume_init_ref().allocate(layout) },
             "Failed to allocate shared memory due to an internal allocator failure.");
 
             Ok(ShmPointer {
                 offset,
-                data_ptr: (offset.value() + self.payload_start_address) as *mut u8,
+                data_ptr: (offset.offset() + self.payload_start_address) as *mut u8,
             })
         }
 
-        unsafe fn deallocate(&self, offset: PointerOffset, layout: std::alloc::Layout) {
+        unsafe fn deallocate(&self, offset: PointerOffset, layout: core::alloc::Layout) {
             self.storage
                 .get()
                 .allocator
@@ -432,6 +442,22 @@ pub mod details {
 
         fn payload_start_address(&self) -> usize {
             self.payload_start_address
+        }
+    }
+
+    impl<Storage: DynamicStorage<AllocatorDetails<PoolAllocator>>> SharedMemoryForPoolAllocator
+        for Memory<PoolAllocator, Storage>
+    {
+        unsafe fn deallocate_bucket(&self, offset: PointerOffset) {
+            self.storage
+                .get()
+                .allocator
+                .assume_init_ref()
+                .deallocate_bucket(offset);
+        }
+
+        fn bucket_size(&self) -> usize {
+            unsafe { self.storage.get().allocator.assume_init_ref().bucket_size() }
         }
     }
 }

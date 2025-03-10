@@ -13,7 +13,7 @@
 package(default_visibility = ["//visibility:public"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_shared_library", "rust_static_library")
+load("@rules_rust//rust:defs.bzl", "rust_shared_library", "rust_static_library", "rust_test")
 
 filegroup(
     name = "all_srcs",
@@ -51,7 +51,9 @@ rust_shared_library(
         "//iceoryx2-cal:iceoryx2-cal",
         "@crate_index//:serde",
     ],
+    tags = ["exclusive"],
     proc_macro_deps = [
+        "//iceoryx2-bb/derive-macros:iceoryx2-bb-derive-macros",
         "//iceoryx2-ffi/ffi-macros:iceoryx2-ffi-macros",
     ],
 )
@@ -70,6 +72,7 @@ rust_static_library(
         "@crate_index//:serde",
     ],
     proc_macro_deps = [
+        "//iceoryx2-bb/derive-macros:iceoryx2-bb-derive-macros",
         "//iceoryx2-ffi/ffi-macros:iceoryx2-ffi-macros",
     ],
 )
@@ -98,4 +101,22 @@ cc_library(
     linkstatic = True,
 )
 
-# TODO: [349] add tests
+rust_test(
+    name = "iceoryx2-ffi-tests",
+    srcs = glob(["src/**/*.rs"]),
+    deps = [
+        "//iceoryx2:iceoryx2",
+        "//iceoryx2-bb/container:iceoryx2-bb-container",
+        "//iceoryx2-bb/elementary:iceoryx2-bb-elementary",
+        "//iceoryx2-bb/log:iceoryx2-bb-log",
+        "//iceoryx2-bb/posix:iceoryx2-bb-posix",
+        "//iceoryx2-bb/system-types:iceoryx2-bb-system-types",
+        "//iceoryx2-bb/testing:iceoryx2-bb-testing",
+        "//iceoryx2-cal:iceoryx2-cal",
+    ],
+    proc_macro_deps = [
+        "//iceoryx2-bb/derive-macros:iceoryx2-bb-derive-macros",
+        "//iceoryx2-ffi/ffi-macros:iceoryx2-ffi-macros",
+        "@crate_index//:generic-tests",
+    ],
+)

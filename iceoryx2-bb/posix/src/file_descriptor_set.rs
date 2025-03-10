@@ -19,7 +19,7 @@
 //! ```ignore
 //! use iceoryx2_bb_posix::file_descriptor_set::*;
 //! use iceoryx2_bb_posix::unix_datagram_socket::*;
-//! use std::time::Duration;
+//! use core::time::Duration;
 //! use iceoryx2_bb_system_types::file_path::FilePath;
 //! use iceoryx2_bb_container::semantic_string::SemanticString;
 //!
@@ -44,7 +44,7 @@
 //!     |fd| println!("Fd was triggered {}", unsafe { fd.native_handle() })).unwrap();
 //! ```
 
-use std::{cell::UnsafeCell, fmt::Debug, time::Duration};
+use core::{cell::UnsafeCell, fmt::Debug, time::Duration};
 
 use crate::{
     clock::AsTimeval,
@@ -90,7 +90,7 @@ pub struct FileDescriptorSetGuard<'set, 'fd> {
     fd: &'fd FileDescriptor,
 }
 
-impl<'set, 'fd> FileDescriptorSetGuard<'set, 'fd> {
+impl<'fd> FileDescriptorSetGuard<'_, 'fd> {
     pub fn file_descriptor(&self) -> &'fd FileDescriptor {
         self.fd
     }
@@ -115,7 +115,7 @@ struct Internals {
 }
 
 impl Debug for FileDescriptorSet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "FileDescriptorSet {{ file_descriptors: {:?}, max_fd: {} }}",
@@ -150,7 +150,6 @@ impl FileDescriptorSet {
     fn internals_mut(&self) -> &mut Internals {
         unsafe { &mut *self.internals.get() }
     }
-    #[deny(clippy::mut_from_ref)]
 
     pub fn new() -> FileDescriptorSet {
         FileDescriptorSet::default()
@@ -186,7 +185,7 @@ impl FileDescriptorSet {
                 &mut self.internals_mut().fd_set,
             )
         };
-        self.internals_mut().max_fd = std::cmp::max(
+        self.internals_mut().max_fd = core::cmp::max(
             self.internals().max_fd,
             unsafe { fd.file_descriptor().native_handle() } + 1,
         );
@@ -203,7 +202,7 @@ impl FileDescriptorSet {
         if self.internals_mut().max_fd == value + 1 {
             self.internals_mut().max_fd = 0;
             for fd in &self.internals().file_descriptors {
-                self.internals_mut().max_fd = std::cmp::max(self.internals().max_fd, fd + 1);
+                self.internals_mut().max_fd = core::cmp::max(self.internals().max_fd, fd + 1);
             }
         }
 
@@ -271,21 +270,21 @@ impl FileDescriptorSet {
             | FileEvent::ReadWrite
             | FileEvent::ReadExceptional
             | FileEvent::ReadWriteExceptional => &mut fd_set,
-            _ => std::ptr::null_mut::<posix::fd_set>(),
+            _ => core::ptr::null_mut::<posix::fd_set>(),
         };
         let write_fd: *mut posix::fd_set = match event {
             FileEvent::Write
             | FileEvent::ReadWrite
             | FileEvent::WriteExceptional
             | FileEvent::ReadWriteExceptional => &mut fd_set,
-            _ => std::ptr::null_mut::<posix::fd_set>(),
+            _ => core::ptr::null_mut::<posix::fd_set>(),
         };
         let exceptional_fd: *mut posix::fd_set = match event {
             FileEvent::Exceptional
             | FileEvent::ReadExceptional
             | FileEvent::WriteExceptional
             | FileEvent::ReadWriteExceptional => &mut fd_set,
-            _ => std::ptr::null_mut::<posix::fd_set>(),
+            _ => core::ptr::null_mut::<posix::fd_set>(),
         };
 
         let msg = "Failure while waiting for file descriptor events";

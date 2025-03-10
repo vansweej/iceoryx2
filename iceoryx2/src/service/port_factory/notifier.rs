@@ -16,7 +16,7 @@
 //! use iceoryx2::prelude::*;
 //! use iceoryx2::port::event_id::EventId;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let event = node.service_builder(&"MyEventName".try_into()?)
 //!     .event()
@@ -28,7 +28,7 @@
 //! # Ok(())
 //! # }
 //! ```
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use crate::port::{event_id::EventId, notifier::Notifier, notifier::NotifierCreateError};
 use iceoryx2_bb_log::fail;

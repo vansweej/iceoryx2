@@ -44,7 +44,7 @@ impl TestFixture {
     }
 
     fn calc_min_number_of_buckets(size: usize, align: usize) -> u32 {
-        (TestFixture::memory_size() / std::cmp::max(size, align)) as u32 - 1
+        (TestFixture::memory_size() / core::cmp::max(size, align)) as u32 - 1
     }
 
     fn create_pool_allocator(&mut self, size: usize, align: usize) -> FixedSizePoolAllocator<512> {
@@ -488,7 +488,7 @@ fn pool_allocator_relocatable_acquire_all_memory_works() {
     const CHUNK_SIZE: usize = 100;
     let start_ptr = NonNull::new(test.get_mut_memory()).unwrap();
 
-    let sut =
+    let mut sut =
         unsafe { PoolAllocator::new_uninit(BUCKET_LAYOUT, start_ptr, TestFixture::memory_size()) };
 
     let mgmt_memory_size = PoolAllocator::memory_size(BUCKET_LAYOUT, TestFixture::memory_size());

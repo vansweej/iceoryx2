@@ -67,7 +67,7 @@
 //! file.set_permission(Permission::ALL);
 //! ```
 
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use crate::config::EINTR_REPETITIONS;
 use crate::file::*;
@@ -259,9 +259,9 @@ pub trait FileDescriptorManagement: FileDescriptorBased + Debug + Sized {
 
     /// Sets a new user and group owner
     fn set_ownership(&mut self, ownership: Ownership) -> Result<(), FileSetOwnerError> {
-        Ok(
-            fail!(from self, when File::set_ownership(self, ownership.uid(), ownership.gid()),  "Unable to set owner of the file."),
-        )
+        fail!(from self, when File::set_ownership(self, ownership.uid(), ownership.gid()),
+            "Unable to set owner of the file.");
+        Ok(())
     }
 
     /// Returns the current permission of the file descriptor

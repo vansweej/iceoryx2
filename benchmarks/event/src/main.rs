@@ -17,16 +17,16 @@ use iceoryx2_bb_posix::barrier::*;
 use iceoryx2_bb_posix::clock::Time;
 use iceoryx2_bb_posix::thread::ThreadBuilder;
 
-fn perform_benchmark<T: Service>(args: &Args) {
-    let service_name_a2b = ServiceName::new("a2b").unwrap();
-    let service_name_b2a = ServiceName::new("b2a").unwrap();
-    let node = NodeBuilder::new().create::<T>().unwrap();
+fn perform_benchmark<T: Service>(args: &Args) -> Result<(), Box<dyn core::error::Error>> {
+    let service_name_a2b = ServiceName::new("a2b")?;
+    let service_name_b2a = ServiceName::new("b2a")?;
+    let node = NodeBuilder::new().create::<T>()?;
 
     let service_a2b = node
         .service_builder(&service_name_a2b)
         .event()
-        .max_notifiers(1)
-        .max_listeners(1)
+        .max_notifiers(1 + args.number_of_additional_notifiers)
+        .max_listeners(1 + args.number_of_additional_listeners)
         .event_id_max_value(args.max_event_id)
         .create()
         .unwrap();
@@ -34,14 +34,33 @@ fn perform_benchmark<T: Service>(args: &Args) {
     let service_b2a = node
         .service_builder(&service_name_b2a)
         .event()
-        .max_notifiers(1)
-        .max_listeners(1)
+        .max_notifiers(1 + args.number_of_additional_notifiers)
+        .max_listeners(1 + args.number_of_additional_listeners)
         .event_id_max_value(args.max_event_id)
         .create()
         .unwrap();
 
-    let barrier_handle = BarrierHandle::new();
-    let barrier = BarrierBuilder::new(3).create(&barrier_handle).unwrap();
+    let mut additional_notifiers = Vec::new();
+    let mut additional_listeners = Vec::new();
+
+    for _ in 0..args.number_of_additional_notifiers {
+        additional_notifiers.push(service_a2b.notifier_builder().create()?);
+        additional_notifiers.push(service_b2a.notifier_builder().create()?);
+    }
+
+    for _ in 0..args.number_of_additional_listeners {
+        additional_listeners.push(service_a2b.listener_builder().create()?);
+        additional_listeners.push(service_b2a.listener_builder().create()?);
+    }
+
+    let start_benchmark_barrier_handle = BarrierHandle::new();
+    let startup_barrier_handle = BarrierHandle::new();
+    let startup_barrier = BarrierBuilder::new(3)
+        .create(&startup_barrier_handle)
+        .unwrap();
+    let start_benchmark_barrier = BarrierBuilder::new(3)
+        .create(&start_benchmark_barrier_handle)
+        .unwrap();
 
     let t1 = ThreadBuilder::new()
         .affinity(args.cpu_core_participant_1)
@@ -50,7 +69,9 @@ fn perform_benchmark<T: Service>(args: &Args) {
             let notifier_a2b = service_a2b.notifier_builder().create().unwrap();
             let listener_b2a = service_b2a.listener_builder().create().unwrap();
 
-            barrier.wait();
+            startup_barrier.wait();
+            start_benchmark_barrier.wait();
+
             notifier_a2b.notify().expect("failed to notify");
 
             for _ in 0..args.iterations {
@@ -66,29 +87,33 @@ fn perform_benchmark<T: Service>(args: &Args) {
             let notifier_b2a = service_b2a.notifier_builder().create().unwrap();
             let listener_a2b = service_a2b.listener_builder().create().unwrap();
 
-            barrier.wait();
+            startup_barrier.wait();
+            start_benchmark_barrier.wait();
+
             for _ in 0..args.iterations {
                 while listener_a2b.blocking_wait_one().unwrap().is_none() {}
                 notifier_b2a.notify().expect("failed to notify");
             }
         });
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    startup_barrier.wait();
     let start = Time::now().expect("failed to acquire time");
-    barrier.wait();
+    start_benchmark_barrier.wait();
 
     drop(t1);
     drop(t2);
 
     let stop = start.elapsed().expect("failed to measure time");
     println!(
-        "{} ::: MaxEventId: {}, Iterations: {}, Time: {}, Latency: {} ns",
-        std::any::type_name::<T>(),
+        "{} ::: MaxEventId: {}, Iterations: {}, Time: {} s, Latency: {} ns",
+        core::any::type_name::<T>(),
         args.max_event_id,
         args.iterations,
         stop.as_secs_f64(),
         stop.as_nanos() / (args.iterations as u128 * 2)
     );
+
+    Ok(())
 }
 
 const ITERATIONS: usize = 1000000;
@@ -121,26 +146,32 @@ struct Args {
     /// The cpu core that shall be used by participant 2
     #[clap(long, default_value_t = 1)]
     cpu_core_participant_2: usize,
+    /// The number of additional notifiers per service in the setup.
+    #[clap(long, default_value_t = 0)]
+    number_of_additional_notifiers: usize,
+    /// The number of additional listeners per service in the setup.
+    #[clap(long, default_value_t = 0)]
+    number_of_additional_listeners: usize,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn core::error::Error>> {
     let args = Args::parse();
 
     if args.debug_mode {
         set_log_level(iceoryx2_bb_log::LogLevel::Trace);
     } else {
-        set_log_level(iceoryx2_bb_log::LogLevel::Info);
+        set_log_level(iceoryx2_bb_log::LogLevel::Error);
     }
 
     let mut at_least_one_benchmark_did_run = false;
 
     if args.bench_ipc || args.bench_all {
-        perform_benchmark::<ipc::Service>(&args);
+        perform_benchmark::<ipc::Service>(&args)?;
         at_least_one_benchmark_did_run = true;
     }
 
     if args.bench_local || args.bench_all {
-        perform_benchmark::<local::Service>(&args);
+        perform_benchmark::<local::Service>(&args)?;
         at_least_one_benchmark_did_run = true;
     }
 
@@ -149,4 +180,6 @@ fn main() {
             "Please use either '--bench-all' or select a specific benchmark. See `--help` for details."
         );
     }
+
+    Ok(())
 }

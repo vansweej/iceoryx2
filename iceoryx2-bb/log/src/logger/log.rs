@@ -22,12 +22,12 @@ impl Logger {
     }
 }
 
-impl crate::logger::Logger for Logger {
+impl crate::Log for Logger {
     fn log(
         &self,
         log_level: crate::LogLevel,
-        origin: std::fmt::Arguments,
-        formatted_message: std::fmt::Arguments,
+        origin: core::fmt::Arguments,
+        formatted_message: core::fmt::Arguments,
     ) {
         let origin = format!("{}", origin);
         match log_level {

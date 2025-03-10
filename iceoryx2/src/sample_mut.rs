@@ -16,7 +16,7 @@
 //!
 //! ```
 //! use iceoryx2::prelude::*;
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! # let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! #
 //! # let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -41,14 +41,14 @@
 //!
 //! ```
 //! use iceoryx2::prelude::*;
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! # let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! #
 //! # let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
 //! #     .publish_subscribe::<[usize]>()
 //! #     .create()?;
 //! #
-//! # let publisher = service.publisher_builder().max_slice_len(16).create()?;
+//! # let publisher = service.publisher_builder().initial_max_slice_len(16).create()?;
 //!
 //! let slice_length = 12;
 //! // initializes every element of the slice with `Default::default()`
@@ -64,15 +64,16 @@
 //! ```
 
 use crate::{
-    port::publisher::{DataSegment, PublisherSendError},
+    port::publisher::{PublisherBackend, PublisherSendError},
     raw_sample::RawSampleMut,
     service::header::publish_subscribe::Header,
 };
 use iceoryx2_cal::shared_memory::*;
-use std::{
-    fmt::{Debug, Formatter},
-    sync::Arc,
-};
+
+use core::fmt::{Debug, Formatter};
+
+extern crate alloc;
+use alloc::sync::Arc;
 
 /// Acquired by a [`crate::port::publisher::Publisher`] via
 ///  * [`crate::port::publisher::Publisher::loan()`],
@@ -87,23 +88,25 @@ use std::{
 /// Does not implement [`Send`] since it releases unsent samples in the [`crate::port::publisher::Publisher`] and the
 /// [`crate::port::publisher::Publisher`] is not thread-safe!
 pub struct SampleMut<Service: crate::service::Service, Payload: Debug + ?Sized, UserHeader> {
-    pub(crate) data_segment: Arc<DataSegment<Service>>,
+    pub(crate) publisher_backend: Arc<PublisherBackend<Service>>,
     pub(crate) ptr: RawSampleMut<Header, UserHeader, Payload>,
     pub(crate) offset_to_chunk: PointerOffset,
+    pub(crate) sample_size: usize,
 }
 
 impl<Service: crate::service::Service, Payload: Debug + ?Sized, UserHeader> Debug
     for SampleMut<Service, Payload, UserHeader>
 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "SampleMut<{}, {}, {}> {{ data_segment: {:?}, offset_to_chunk: {:?} }}",
+            "SampleMut<{}, {}, {}> {{ publisher_backend: {:?}, offset_to_chunk: {:?}, sample_size: {} }}",
             core::any::type_name::<Payload>(),
             core::any::type_name::<UserHeader>(),
             core::any::type_name::<Service>(),
-            self.data_segment,
-            self.offset_to_chunk
+            self.publisher_backend,
+            self.offset_to_chunk,
+            self.sample_size
         )
     }
 }
@@ -112,7 +115,8 @@ impl<Service: crate::service::Service, Payload: Debug + ?Sized, UserHeader> Drop
     for SampleMut<Service, Payload, UserHeader>
 {
     fn drop(&mut self) {
-        self.data_segment.return_loaned_sample(self.offset_to_chunk);
+        self.publisher_backend
+            .return_loaned_sample(self.offset_to_chunk);
     }
 }
 
@@ -129,7 +133,7 @@ impl<
     /// ```
     /// use iceoryx2::prelude::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn core::error::Error>> {
     /// # let node = NodeBuilder::new().create::<ipc::Service>()?;
     /// #
     /// # let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -154,7 +158,7 @@ impl<
     /// ```
     /// use iceoryx2::prelude::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn core::error::Error>> {
     /// # let node = NodeBuilder::new().create::<ipc::Service>()?;
     /// #
     /// # let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -180,7 +184,7 @@ impl<
     /// ```
     /// use iceoryx2::prelude::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn core::error::Error>> {
     /// # let node = NodeBuilder::new().create::<ipc::Service>()?;
     /// #
     /// # let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -211,7 +215,7 @@ impl<
     /// ```
     /// use iceoryx2::prelude::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn core::error::Error>> {
     /// # let node = NodeBuilder::new().create::<ipc::Service>()?;
     /// #
     /// # let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -241,7 +245,7 @@ impl<
     /// ```
     /// use iceoryx2::prelude::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn core::error::Error>> {
     /// # let node = NodeBuilder::new().create::<ipc::Service>()?;
     /// #
     /// # let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -271,7 +275,7 @@ impl<
     /// ```
     /// use iceoryx2::prelude::*;
     ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn main() -> Result<(), Box<dyn core::error::Error>> {
     /// # let node = NodeBuilder::new().create::<ipc::Service>()?;
     /// #
     /// # let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
@@ -288,6 +292,7 @@ impl<
     /// # }
     /// ```
     pub fn send(self) -> Result<usize, PublisherSendError> {
-        self.data_segment.send_sample(self.offset_to_chunk.value())
+        self.publisher_backend
+            .send_sample(self.offset_to_chunk, self.sample_size)
     }
 }

@@ -70,10 +70,6 @@ pub unsafe fn pthread_attr_setschedpolicy(attr: *mut pthread_attr_t, policy: int
     crate::internal::pthread_attr_setschedpolicy(attr, policy)
 }
 
-pub unsafe fn pthread_attr_setscope(attr: *mut pthread_attr_t, scope: int) -> int {
-    crate::internal::pthread_attr_setscope(attr, scope)
-}
-
 pub unsafe fn pthread_attr_setschedparam(
     attr: *mut pthread_attr_t,
     param: *const sched_param,
@@ -85,29 +81,23 @@ pub unsafe fn pthread_attr_setstacksize(attr: *mut pthread_attr_t, stacksize: si
     crate::internal::pthread_attr_setstacksize(attr, stacksize)
 }
 
-pub unsafe fn pthread_attr_setstack(
-    attr: *mut pthread_attr_t,
-    stackaddr: *mut void,
-    stacksize: size_t,
-) -> int {
-    crate::internal::pthread_attr_setstack(attr, stackaddr, stacksize)
-}
-
 pub unsafe fn pthread_attr_setaffinity_np(
     attr: *mut pthread_attr_t,
     cpusetsize: size_t,
     cpuset: *const cpu_set_t,
 ) -> int {
-    internal::pthread_attr_setaffinity_np(attr, cpusetsize, cpuset)
+    let cpuset = core::mem::transmute::<cpu_set_t, native_cpu_set_t>(*cpuset);
+
+    internal::pthread_attr_setaffinity_np(attr, cpusetsize, &cpuset)
 }
 
 pub unsafe fn pthread_create(
     thread: *mut pthread_t,
     attr: *const pthread_attr_t,
-    start_routine: Option<unsafe extern "C" fn(*mut void) -> *mut void>,
+    start_routine: unsafe extern "C" fn(*mut void) -> *mut void,
     arg: *mut void,
 ) -> int {
-    crate::internal::pthread_create(thread, attr, start_routine, arg)
+    crate::internal::pthread_create(thread, attr, Some(start_routine), arg)
 }
 
 pub unsafe fn pthread_join(thread: pthread_t, retval: *mut *mut void) -> int {
@@ -126,14 +116,6 @@ pub unsafe fn pthread_getname_np(thread: pthread_t, name: *mut c_char, len: size
     internal::pthread_getname_np(thread, name, len)
 }
 
-pub unsafe fn pthread_cancel(thread: pthread_t) -> int {
-    crate::internal::pthread_cancel(thread)
-}
-
-pub unsafe fn pthread_exit(value_ptr: *mut void) -> ! {
-    crate::internal::pthread_exit(value_ptr)
-}
-
 pub unsafe fn pthread_kill(thread: pthread_t, sig: int) -> int {
     internal::pthread_kill(thread, sig)
 }
@@ -143,7 +125,9 @@ pub unsafe fn pthread_setaffinity_np(
     cpusetsize: size_t,
     cpuset: *const cpu_set_t,
 ) -> int {
-    internal::pthread_setaffinity_np(thread, cpusetsize, cpuset)
+    let cpuset = core::mem::transmute::<cpu_set_t, native_cpu_set_t>(*cpuset);
+
+    internal::pthread_setaffinity_np(thread, cpusetsize, &cpuset)
 }
 
 pub unsafe fn pthread_getaffinity_np(
@@ -151,7 +135,13 @@ pub unsafe fn pthread_getaffinity_np(
     cpusetsize: size_t,
     cpuset: *mut cpu_set_t,
 ) -> int {
-    internal::pthread_getaffinity_np(thread, cpusetsize, cpuset)
+    let mut native_cpuset = native_cpu_set_t::new();
+
+    let ret_val = internal::pthread_getaffinity_np(thread, cpusetsize, &mut native_cpuset);
+
+    *cpuset = core::mem::transmute::<native_cpu_set_t, cpu_set_t>(native_cpuset);
+
+    ret_val
 }
 
 pub unsafe fn pthread_rwlockattr_init(attr: *mut pthread_rwlockattr_t) -> int {
@@ -197,64 +187,6 @@ pub unsafe fn pthread_rwlock_trywrlock(lock: *mut pthread_rwlock_t) -> int {
     crate::internal::pthread_rwlock_trywrlock(lock)
 }
 
-pub unsafe fn pthread_rwlock_timedwrlock(
-    lock: *mut pthread_rwlock_t,
-    abs_timeout: *const timespec,
-) -> int {
-    crate::internal::pthread_rwlock_timedwrlock(lock, abs_timeout)
-}
-
-pub unsafe fn pthread_rwlock_timedrdlock(
-    lock: *mut pthread_rwlock_t,
-    abs_timeout: *const timespec,
-) -> int {
-    crate::internal::pthread_rwlock_timedrdlock(lock, abs_timeout)
-}
-
-pub unsafe fn pthread_cond_broadcast(cond: *mut pthread_cond_t) -> int {
-    crate::internal::pthread_cond_broadcast(cond)
-}
-
-pub unsafe fn pthread_cond_signal(cond: *mut pthread_cond_t) -> int {
-    crate::internal::pthread_cond_signal(cond)
-}
-
-pub unsafe fn pthread_cond_destroy(cond: *mut pthread_cond_t) -> int {
-    crate::internal::pthread_cond_destroy(cond)
-}
-
-pub unsafe fn pthread_cond_init(cond: *mut pthread_cond_t, attr: *const pthread_condattr_t) -> int {
-    crate::internal::pthread_cond_init(cond, attr)
-}
-
-pub unsafe fn pthread_cond_wait(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t) -> int {
-    crate::internal::pthread_cond_wait(cond, mutex)
-}
-
-pub unsafe fn pthread_cond_timedwait(
-    cond: *mut pthread_cond_t,
-    mutex: *mut pthread_mutex_t,
-    abstime: *const timespec,
-) -> int {
-    crate::internal::pthread_cond_timedwait(cond, mutex, abstime)
-}
-
-pub unsafe fn pthread_condattr_init(attr: *mut pthread_condattr_t) -> int {
-    crate::internal::pthread_condattr_init(attr)
-}
-
-pub unsafe fn pthread_condattr_destroy(attr: *mut pthread_condattr_t) -> int {
-    crate::internal::pthread_condattr_destroy(attr)
-}
-
-pub unsafe fn pthread_condattr_setclock(attr: *mut pthread_condattr_t, clock_id: clockid_t) -> int {
-    crate::internal::pthread_condattr_setclock(attr, clock_id)
-}
-
-pub unsafe fn pthread_condattr_setpshared(attr: *mut pthread_condattr_t, pshared: int) -> int {
-    crate::internal::pthread_condattr_setpshared(attr, pshared)
-}
-
 pub unsafe fn pthread_mutex_init(
     mtx: *mut pthread_mutex_t,
     attr: *const pthread_mutexattr_t,
@@ -289,21 +221,6 @@ pub unsafe fn pthread_mutex_consistent(mtx: *mut pthread_mutex_t) -> int {
     crate::internal::pthread_mutex_consistent(mtx)
 }
 
-pub unsafe fn pthread_mutex_setprioceiling(
-    mtx: *mut pthread_mutex_t,
-    prioceiling: int,
-    old_ceiling: *mut int,
-) -> int {
-    crate::internal::pthread_mutex_setprioceiling(mtx, prioceiling, old_ceiling)
-}
-
-pub unsafe fn pthread_mutex_getprioceiling(
-    mtx: *mut pthread_mutex_t,
-    prioceiling: *mut int,
-) -> int {
-    crate::internal::pthread_mutex_getprioceiling(mtx, prioceiling)
-}
-
 pub unsafe fn pthread_mutexattr_init(attr: *mut pthread_mutexattr_t) -> int {
     crate::internal::pthread_mutexattr_init(attr)
 }
@@ -328,13 +245,6 @@ pub unsafe fn pthread_mutexattr_settype(attr: *mut pthread_mutexattr_t, mtype: i
     crate::internal::pthread_mutexattr_settype(attr, mtype)
 }
 
-pub unsafe fn pthread_mutexattr_setprioceiling(
-    attr: *mut pthread_mutexattr_t,
-    prioceiling: int,
-) -> int {
-    crate::internal::pthread_mutexattr_setprioceiling(attr, prioceiling)
-}
-
 mod internal {
     use super::*;
 
@@ -343,7 +253,7 @@ mod internal {
         pub(super) fn pthread_attr_setaffinity_np(
             attr: *mut pthread_attr_t,
             cpusetsize: size_t,
-            cpuset: *const cpu_set_t,
+            cpuset: *const native_cpu_set_t,
         ) -> int;
 
         pub(super) fn pthread_setname_np(thread: pthread_t, name: *const c_char) -> int;
@@ -352,12 +262,12 @@ mod internal {
         pub(super) fn pthread_setaffinity_np(
             thread: pthread_t,
             cpusetsize: size_t,
-            cpuset: *const cpu_set_t,
+            cpuset: *const native_cpu_set_t,
         ) -> int;
         pub(super) fn pthread_getaffinity_np(
             thread: pthread_t,
             cpusetsize: size_t,
-            cpuset: *mut cpu_set_t,
+            cpuset: *mut native_cpu_set_t,
         ) -> int;
     }
 }

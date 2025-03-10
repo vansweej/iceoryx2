@@ -23,11 +23,12 @@
 
 use crate::system_configuration::Feature;
 use crate::{config::DEFAULT_CLOCK_MODE, handle_errno};
+use core::time::Duration;
 use iceoryx2_bb_elementary::enum_gen;
 use iceoryx2_bb_log::fail;
 use iceoryx2_pal_posix::posix::errno::Errno;
 use iceoryx2_pal_posix::*;
-use std::time::Duration;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum TimeError {
@@ -63,7 +64,7 @@ impl From<TimeError> for NanosleepError {
 }
 
 /// Represents different low level clocks.
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[repr(i32)]
 pub enum ClockType {
     /// represents a steady clock which does not change when the system time
@@ -179,7 +180,7 @@ impl TimeBuilder {
 }
 
 /// Represents time under a specified [`ClockType`]
-#[derive(Default, Clone, Copy, Eq, PartialEq, Hash, Debug)]
+#[derive(Default, Clone, Copy, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
 pub struct Time {
     pub(crate) clock_type: ClockType,
     pub(crate) seconds: u64,
@@ -221,7 +222,7 @@ impl Time {
     /// # Examples
     /// ```
     /// use iceoryx2_bb_posix::clock::*;
-    /// use std::time::Duration;
+    /// use core::time::Duration;
     ///
     /// let now: Time = Time::now().unwrap();
     /// // do something
@@ -269,7 +270,7 @@ impl AsTimespec for Time {
 /// # Examples
 /// ```
 /// use iceoryx2_bb_posix::clock::*;
-/// use std::time::Duration;
+/// use core::time::Duration;
 ///
 /// // sleep for 100 milliseconds
 /// nanosleep(Duration::from_millis(100)).unwrap();
@@ -292,7 +293,7 @@ pub fn nanosleep(duration: Duration) -> Result<(), NanosleepError> {
 /// # Examples
 /// ```
 /// use iceoryx2_bb_posix::clock::*;
-/// use std::time::Duration;
+/// use core::time::Duration;
 ///
 /// // sleep for 100 milliseconds
 /// nanosleep_with_clock(Duration::from_millis(100), ClockType::Realtime).unwrap();

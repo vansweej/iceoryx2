@@ -22,7 +22,7 @@
 //!
 //! ```
 //! use iceoryx2::prelude::*;
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let event = node.service_builder(&"MyEventName".try_into()?)
 //!     .event()
@@ -42,7 +42,7 @@
 //!
 //! ```
 //! use iceoryx2::prelude::*;
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! let event = node.service_builder(&"MyEventName".try_into()?)
 //!     .event()
@@ -72,9 +72,11 @@ use crate::service::dynamic_config::event::ListenerDetails;
 use crate::service::naming_scheme::event_concept_name;
 use crate::service::ServiceState;
 use crate::{port::port_identifiers::UniqueListenerId, service};
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
-use std::time::Duration;
+use core::sync::atomic::Ordering;
+use core::time::Duration;
+
+extern crate alloc;
+use alloc::sync::Arc;
 
 use super::event_id::EventId;
 
@@ -91,13 +93,13 @@ pub enum ListenerCreateError {
     ResourceCreationFailed,
 }
 
-impl std::fmt::Display for ListenerCreateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ListenerCreateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "ListenerCreateError::{:?}", self)
     }
 }
 
-impl std::error::Error for ListenerCreateError {}
+impl core::error::Error for ListenerCreateError {}
 
 /// Represents the receiving endpoint of an event based communication.
 #[derive(Debug)]
@@ -157,7 +159,7 @@ impl<Service: service::Service> Listener<Service> {
             listener_id,
         };
 
-        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
 
         // !MUST! be the last task otherwise a listener is added to the dynamic config without
         // the creation of all required channels
@@ -183,12 +185,22 @@ impl<Service: service::Service> Listener<Service> {
         Ok(new_self)
     }
 
+    /// Returns the deadline of the corresponding [`Service`](crate::service::Service).
+    pub fn deadline(&self) -> Option<Duration> {
+        self.service_state
+            .static_config
+            .event()
+            .deadline
+            .map(|v| v.value)
+    }
+
     /// Non-blocking wait for new [`EventId`]s. Collects all [`EventId`]s that were received and
     /// calls the provided callback is with the [`EventId`] as input argument.
     pub fn try_wait_all<F: FnMut(EventId)>(&self, callback: F) -> Result<(), ListenerWaitError> {
         use iceoryx2_cal::event::Listener;
-        Ok(fail!(from self, when self.listener.try_wait_all(callback),
-            "Failed to while calling try_wait on underlying event::Listener"))
+        fail!(from self, when self.listener.try_wait_all(callback),
+            "Failed to while calling try_wait on underlying event::Listener");
+        Ok(())
     }
 
     /// Blocking wait for new [`EventId`]s until the provided timeout has passed. Unblocks as soon
@@ -200,10 +212,9 @@ impl<Service: service::Service> Listener<Service> {
         timeout: Duration,
     ) -> Result<(), ListenerWaitError> {
         use iceoryx2_cal::event::Listener;
-        Ok(
-            fail!(from self, when self.listener.timed_wait_all(callback, timeout),
-            "Failed to while calling timed_wait({:?}) on underlying event::Listener", timeout),
-        )
+        fail!(from self, when self.listener.timed_wait_all(callback, timeout),
+            "Failed to while calling timed_wait({:?}) on underlying event::Listener", timeout);
+        Ok(())
     }
 
     /// Blocking wait for new [`EventId`]s. Unblocks as soon
@@ -214,10 +225,9 @@ impl<Service: service::Service> Listener<Service> {
         callback: F,
     ) -> Result<(), ListenerWaitError> {
         use iceoryx2_cal::event::Listener;
-        Ok(
-            fail!(from self, when self.listener.blocking_wait_all(callback),
-            "Failed to while calling blocking_wait on underlying event::Listener"),
-        )
+        fail!(from self, when self.listener.blocking_wait_all(callback),
+            "Failed to while calling blocking_wait on underlying event::Listener");
+        Ok(())
     }
 
     /// Non-blocking wait for a new [`EventId`]. If no [`EventId`] was notified it returns [`None`].

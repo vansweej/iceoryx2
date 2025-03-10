@@ -44,7 +44,6 @@ pub type in_port_t = u16;
 pub type in_addr_t = u32;
 pub type long = core::ffi::c_long;
 pub type mode_t = crate::internal::mode_t;
-pub type mqd_t = int;
 pub type nlink_t = crate::internal::nlink_t;
 pub type off_t = crate::internal::off_t;
 pub type pid_t = crate::internal::pid_t;
@@ -128,20 +127,6 @@ impl Struct for pthread_rwlock_t {
     }
 }
 
-pub struct pthread_cond_t {
-    pub(crate) cv: ConditionVariable,
-}
-impl Struct for pthread_cond_t {
-    fn new() -> Self {
-        Self {
-            cv: ConditionVariable::new(),
-        }
-    }
-}
-
-pub struct pthread_condattr_t {}
-impl Struct for pthread_condattr_t {}
-
 #[repr(C)]
 pub struct pthread_mutex_t {
     pub(crate) mtx: Mutex,
@@ -186,22 +171,14 @@ impl Struct for sem_t {
 pub type flock = crate::internal::flock;
 impl Struct for flock {}
 
-pub struct mq_attr {
-    pub mq_flags: long,
-    pub mq_maxmsg: long,
-    pub mq_msgsize: long,
-    pub mq_curmsgs: long,
-}
-impl Struct for mq_attr {}
-
 pub type rlimit = crate::internal::rlimit;
 impl Struct for rlimit {}
 
 pub type sched_param = crate::internal::sched_param;
 impl Struct for sched_param {}
 
-pub type sigaction_t = crate::internal::iox2_sigaction;
-impl Struct for sigaction_t {}
+pub(crate) type native_stat_t = crate::internal::stat;
+impl Struct for native_stat_t {}
 
 #[repr(C)]
 pub struct stat_t {
@@ -219,8 +196,8 @@ pub struct stat_t {
     pub st_blksize: blksize_t,
     pub st_blocks: blkcnt_t,
 }
-impl From<crate::internal::stat> for stat_t {
-    fn from(value: crate::internal::stat) -> Self {
+impl From<native_stat_t> for stat_t {
+    fn from(value: native_stat_t) -> Self {
         stat_t {
             st_dev: value.st_dev,
             st_ino: value.st_ino,
@@ -239,7 +216,6 @@ impl From<crate::internal::stat> for stat_t {
     }
 }
 impl Struct for stat_t {}
-impl Struct for crate::internal::stat {}
 
 pub type timespec = crate::internal::timespec;
 impl Struct for timespec {}

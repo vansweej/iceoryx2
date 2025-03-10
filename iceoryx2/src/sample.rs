@@ -14,7 +14,7 @@
 //!
 //! ```
 //! use iceoryx2::prelude::*;
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! # let node = NodeBuilder::new().create::<ipc::Service>()?;
 //! # let service = node.service_builder(&"My/Funk/ServiceName".try_into()?)
 //! #   .publish_subscribe::<u64>()
@@ -30,8 +30,10 @@
 //! # }
 //! ```
 
-use std::sync::Arc;
-use std::{fmt::Debug, ops::Deref};
+use core::{fmt::Debug, ops::Deref};
+
+extern crate alloc;
+use alloc::sync::Arc;
 
 use iceoryx2_bb_log::fatal_panic;
 use iceoryx2_cal::zero_copy_connection::{PointerOffset, ZeroCopyReceiver, ZeroCopyReleaseError};
@@ -59,7 +61,7 @@ pub struct Sample<Service: crate::service::Service, Payload: Debug + ?Sized, Use
 impl<Service: crate::service::Service, Payload: Debug + ?Sized, UserHeader> Debug
     for Sample<Service, Payload, UserHeader>
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "Sample<{}, {}, {}> {{ details: {:?} }}",
@@ -84,6 +86,13 @@ impl<Service: crate::service::Service, Payload: Debug + ?Sized, UserHeader> Drop
     for Sample<Service, Payload, UserHeader>
 {
     fn drop(&mut self) {
+        unsafe {
+            self.details
+                .publisher_connection
+                .data_segment
+                .unregister_offset(self.details.offset)
+        };
+
         match self
             .details
             .publisher_connection

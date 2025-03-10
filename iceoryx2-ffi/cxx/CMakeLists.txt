@@ -12,7 +12,7 @@
 
 cmake_minimum_required(VERSION 3.22)
 
-set(ICEORYX_HOOFS_VERSION 2.95.2)
+set(ICEORYX_HOOFS_VERSION 2.95.4)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/fetch-iceoryx-hoofs.cmake)
 
 project(iceoryx2-cxx VERSION ${IOX2_VERSION_STRING} LANGUAGES CXX)
@@ -36,6 +36,10 @@ target_include_directories(includes-only-cxx
 # object lib
 
 add_library(iceoryx2-cxx-object-lib OBJECT
+    src/attribute.cpp
+    src/attribute_set.cpp
+    src/attribute_specifier.cpp
+    src/attribute_verifier.cpp
     src/config.cpp
     src/event_id.cpp
     src/file_descriptor.cpp
@@ -46,6 +50,7 @@ add_library(iceoryx2-cxx-object-lib OBJECT
     src/messaging_pattern.cpp
     src/node.cpp
     src/node_details.cpp
+    src/node_id.cpp
     src/node_name.cpp
     src/node_state.cpp
     src/notifier.cpp

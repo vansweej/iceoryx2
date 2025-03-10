@@ -12,13 +12,13 @@
 
 pub mod common;
 pub mod id_tracker;
-pub mod process_local;
+pub mod process_local_socketpair;
 pub mod sem_bitset_posix_shared_memory;
 pub mod sem_bitset_process_local;
 pub mod signal_mechanism;
 pub mod unix_datagram_socket;
 
-use std::{fmt::Debug, time::Duration};
+use core::{fmt::Debug, time::Duration};
 
 pub use crate::named_concept::{NamedConcept, NamedConceptBuilder, NamedConceptMgmt};
 pub use iceoryx2_bb_system_types::file_name::*;
@@ -26,22 +26,24 @@ pub use iceoryx2_bb_system_types::path::Path;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum NotifierNotifyError {
+    Interrupt,
     FailedToDeliverSignal,
     TriggerIdOutOfBounds,
     Disconnected,
     InternalFailure,
 }
 
-impl std::fmt::Display for NotifierNotifyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for NotifierNotifyError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "{}::{:?}", std::stringify!(Self), self)
     }
 }
 
-impl std::error::Error for NotifierNotifyError {}
+impl core::error::Error for NotifierNotifyError {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum NotifierCreateError {
+    Interrupt,
     DoesNotExist,
     InsufficientPermissions,
     VersionMismatch,
@@ -49,13 +51,13 @@ pub enum NotifierCreateError {
     InternalFailure,
 }
 
-impl std::fmt::Display for NotifierCreateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for NotifierCreateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "{}::{:?}", std::stringify!(Self), self)
     }
 }
 
-impl std::error::Error for NotifierCreateError {}
+impl core::error::Error for NotifierCreateError {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ListenerWaitError {
@@ -64,13 +66,13 @@ pub enum ListenerWaitError {
     InterruptSignal,
 }
 
-impl std::fmt::Display for ListenerWaitError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ListenerWaitError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "{}::{:?}", std::stringify!(Self), self)
     }
 }
 
-impl std::error::Error for ListenerWaitError {}
+impl core::error::Error for ListenerWaitError {}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ListenerCreateError {
@@ -79,13 +81,13 @@ pub enum ListenerCreateError {
     InternalFailure,
 }
 
-impl std::fmt::Display for ListenerCreateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ListenerCreateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "{}::{:?}", std::stringify!(Self), self)
     }
 }
 
-impl std::error::Error for ListenerCreateError {}
+impl core::error::Error for ListenerCreateError {}
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TriggerId(usize);

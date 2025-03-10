@@ -26,43 +26,74 @@ use iceoryx2::service::builder::publish_subscribe::{
 };
 use iceoryx2::service::port_factory::publish_subscribe::PortFactory;
 use iceoryx2::service::static_config::message_type_details::{TypeDetail, TypeVariant};
+use iceoryx2_bb_elementary::AsCStr;
 use iceoryx2_bb_log::fatal_panic;
+use iceoryx2_ffi_macros::CStrRepr;
 
+use core::alloc::Layout;
 use core::ffi::{c_char, c_int};
 use core::mem::ManuallyDrop;
 use core::{slice, str};
-use std::alloc::Layout;
+
+use super::{iox2_attribute_specifier_h_ref, iox2_attribute_verifier_h_ref};
 
 // BEGIN types definition
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, CStrRepr)]
 pub enum iox2_pub_sub_open_or_create_error_e {
+    #[CStr = "does not exist"]
     O_DOES_NOT_EXIST = IOX2_OK as isize + 1,
+    #[CStr = "internal failure"]
     O_INTERNAL_FAILURE,
+    #[CStr = "incompatible types"]
     O_INCOMPATIBLE_TYPES,
+    #[CStr = "incompatible messaging pattern"]
     O_INCOMPATIBLE_MESSAGING_PATTERN,
+    #[CStr = "incompatible attributes"]
     O_INCOMPATIBLE_ATTRIBUTES,
+    #[CStr = "does not support requested min buffer size"]
     O_DOES_NOT_SUPPORT_REQUESTED_MIN_BUFFER_SIZE,
+    #[CStr = "does not support requested min history size"]
     O_DOES_NOT_SUPPORT_REQUESTED_MIN_HISTORY_SIZE,
+    #[CStr = "does not support requested min subscriber borrowed samples"]
     O_DOES_NOT_SUPPORT_REQUESTED_MIN_SUBSCRIBER_BORROWED_SAMPLES,
+    #[CStr = "does not support requested amount of publishers"]
     O_DOES_NOT_SUPPORT_REQUESTED_AMOUNT_OF_PUBLISHERS,
+    #[CStr = "does not support requested amount of subscribers"]
     O_DOES_NOT_SUPPORT_REQUESTED_AMOUNT_OF_SUBSCRIBERS,
+    #[CStr = "does not support requested amount of nodes"]
     O_DOES_NOT_SUPPORT_REQUESTED_AMOUNT_OF_NODES,
+    #[CStr = "incompatible overflow behavior"]
     O_INCOMPATIBLE_OVERFLOW_BEHAVIOR,
+    #[CStr = "insufficient permissions"]
     O_INSUFFICIENT_PERMISSIONS,
+    #[CStr = "service in corrupted state"]
     O_SERVICE_IN_CORRUPTED_STATE,
+    #[CStr = "hangs in creation"]
     O_HANGS_IN_CREATION,
+    #[CStr = "exceeds max number of nodes"]
     O_EXCEEDS_MAX_NUMBER_OF_NODES,
+    #[CStr = "is marked for destruction"]
     O_IS_MARKED_FOR_DESTRUCTION,
+    #[CStr = "service in corrupted state"]
     C_SERVICE_IN_CORRUPTED_STATE,
+    #[CStr = "subscriber buffer must be larger than history size"]
     C_SUBSCRIBER_BUFFER_MUST_BE_LARGER_THAN_HISTORY_SIZE,
+    #[CStr = "already exists"]
     C_ALREADY_EXISTS,
+    #[CStr = "insufficient permissions"]
     C_INSUFFICIENT_PERMISSIONS,
+    #[CStr = "internal failure"]
     C_INTERNAL_FAILURE,
+    #[CStr = "is being created by another instance"]
     C_IS_BEING_CREATED_BY_ANOTHER_INSTANCE,
+    #[CStr = "old connection still active"]
     C_OLD_CONNECTION_STILL_ACTIVE,
+    #[CStr = "hangs in creation"]
     C_HANGS_IN_CREATION,
+    #[CStr = "same service is created and removed repeatedly"]
+    SYSTEM_IN_FLUX,
 }
 
 impl IntoCInt for PublishSubscribeOpenError {
@@ -156,6 +187,7 @@ impl IntoCInt for PublishSubscribeOpenOrCreateError {
             PublishSubscribeOpenOrCreateError::PublishSubscribeCreateError(error) => {
                 error.into_c_int()
             }
+            e => e.into_c_int(),
         }
     }
 }
@@ -199,6 +231,27 @@ pub enum iox2_type_detail_error_e {
 // END type definition
 
 // BEGIN C API
+
+/// Returns a string literal describing the provided [`iox2_pub_sub_open_or_create_error_e`].
+///
+/// # Arguments
+///
+/// * `error` - The error value for which a description should be returned
+///
+/// # Returns
+///
+/// A pointer to a null-terminated string containing the error message.
+/// The string is stored in the .rodata section of the binary.
+///
+/// # Safety
+///
+/// The returned pointer must not be modified or freed and is valid as long as the program runs.
+#[no_mangle]
+pub unsafe extern "C" fn iox2_pub_sub_open_or_create_error_string(
+    error: iox2_pub_sub_open_or_create_error_e,
+) -> *const c_char {
+    error.as_const_cstr().as_ptr() as *const c_char
+}
 
 /// Sets the user header type details for the builder
 ///
@@ -480,6 +533,52 @@ pub unsafe extern "C" fn iox2_service_builder_pub_sub_set_max_subscribers(
     }
 }
 
+/// Sets the payload alignment for the builder
+///
+/// # Arguments
+///
+/// * `service_builder_handle` - Must be a valid [`iox2_service_builder_pub_sub_h_ref`]
+///   obtained by [`iox2_service_builder_pub_sub`](crate::iox2_service_builder_pub_sub).
+/// * `value` - The value to set the payload alignment to
+///
+/// # Safety
+///
+/// * `service_builder_handle` must be valid handles
+#[no_mangle]
+pub unsafe extern "C" fn iox2_service_builder_pub_sub_set_payload_alignment(
+    service_builder_handle: iox2_service_builder_pub_sub_h_ref,
+    value: c_size_t,
+) {
+    service_builder_handle.assert_non_null();
+
+    let service_builder_struct = unsafe { &mut *service_builder_handle.as_type() };
+
+    match service_builder_struct.service_type {
+        iox2_service_type_e::IPC => {
+            let service_builder =
+                ManuallyDrop::take(&mut service_builder_struct.value.as_mut().ipc);
+
+            let service_builder = ManuallyDrop::into_inner(service_builder.pub_sub);
+            service_builder_struct.set(ServiceBuilderUnion::new_ipc_pub_sub(
+                service_builder.payload_alignment(
+                    Alignment::new(value).unwrap_or(Alignment::new_unchecked(8)),
+                ),
+            ));
+        }
+        iox2_service_type_e::LOCAL => {
+            let service_builder =
+                ManuallyDrop::take(&mut service_builder_struct.value.as_mut().local);
+
+            let service_builder = ManuallyDrop::into_inner(service_builder.pub_sub);
+            service_builder_struct.set(ServiceBuilderUnion::new_local_pub_sub(
+                service_builder.payload_alignment(
+                    Alignment::new(value).unwrap_or(Alignment::new_unchecked(8)),
+                ),
+            ));
+        }
+    }
+}
+
 /// Sets the history size
 ///
 /// # Arguments
@@ -648,8 +747,6 @@ pub unsafe extern "C" fn iox2_service_builder_pub_sub_set_enable_safe_overflow(
     }
 }
 
-// TODO [#210] add all the other setter methods
-
 /// Opens a publish-subscribe service or creates the service if it does not exist and returns a port factory to create publishers and subscribers.
 ///
 /// # Arguments
@@ -679,6 +776,45 @@ pub unsafe extern "C" fn iox2_service_builder_pub_sub_open_or_create(
         port_factory_handle_ptr,
         |service_builder| service_builder.open_or_create(),
         |service_builder| service_builder.open_or_create(),
+    )
+}
+
+/// Opens a publish-subscribe service or creates the service if it does not exist and returns a port factory to create publishers and subscribers.
+/// If the service does not exist, the provided arguments are stored inside the services, if the
+/// service already exists, the provided attributes are considered as requirements.
+///
+/// # Arguments
+///
+/// * `service_builder_handle` - Must be a valid [`iox2_service_builder_pub_sub_h`]
+///   obtained by [`iox2_service_builder_pub_sub`](crate::iox2_service_builder_pub_sub)
+/// * `port_factory_struct_ptr` - Must be either a NULL pointer or a pointer to a valid
+///   [`iox2_port_factory_pub_sub_t`]. If it is a NULL pointer, the storage will be allocated on the heap.
+/// * `port_factory_handle_ptr` - An uninitialized or dangling [`iox2_port_factory_pub_sub_h`] handle which will be initialized by this function call.
+///
+/// Returns IOX2_OK on success, an [`iox2_pub_sub_open_or_create_error_e`] otherwise.
+///
+/// # Safety
+///
+/// * The `service_builder_handle` is invalid after the return of this function and leads to undefined behavior if used in another function call!
+/// * The corresponding [`iox2_service_builder_t`](crate::iox2_service_builder_t) can be re-used with
+///   a call to [`iox2_node_service_builder`](crate::iox2_node_service_builder)!
+/// * The `attribute_verifier_handle` must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn iox2_service_builder_pub_sub_open_or_create_with_attributes(
+    service_builder_handle: iox2_service_builder_pub_sub_h,
+    attribute_verifier_handle: iox2_attribute_verifier_h_ref,
+    port_factory_struct_ptr: *mut iox2_port_factory_pub_sub_t,
+    port_factory_handle_ptr: *mut iox2_port_factory_pub_sub_h,
+) -> c_int {
+    let attribute_verifier_struct = &mut *attribute_verifier_handle.as_type();
+    let attribute_verifier = &attribute_verifier_struct.value.as_ref().0;
+
+    iox2_service_builder_pub_sub_open_create_impl(
+        service_builder_handle,
+        port_factory_struct_ptr,
+        port_factory_handle_ptr,
+        |service_builder| service_builder.open_or_create_with_attributes(attribute_verifier),
+        |service_builder| service_builder.open_or_create_with_attributes(attribute_verifier),
     )
 }
 
@@ -714,6 +850,44 @@ pub unsafe extern "C" fn iox2_service_builder_pub_sub_open(
     )
 }
 
+/// Opens a publish-subscribe service and returns a port factory to create publishers and subscribers.
+/// The provided attributes are considered as requirements.
+///
+/// # Arguments
+///
+/// * `service_builder_handle` - Must be a valid [`iox2_service_builder_pub_sub_h`]
+///   obtained by [`iox2_service_builder_pub_sub`](crate::iox2_service_builder_pub_sub)
+/// * `port_factory_struct_ptr` - Must be either a NULL pointer or a pointer to a valid
+///   [`iox2_port_factory_pub_sub_t`]. If it is a NULL pointer, the storage will be allocated on the heap.
+/// * `port_factory_handle_ptr` - An uninitialized or dangling [`iox2_port_factory_pub_sub_h`] handle which will be initialized by this function call.
+///
+/// Returns IOX2_OK on success, an [`iox2_pub_sub_open_or_create_error_e`] otherwise. Note, only the errors annotated with `O_` are relevant.
+///
+/// # Safety
+///
+/// * The `service_builder_handle` is invalid after the return of this function and leads to undefined behavior if used in another function call!
+/// * The corresponding [`iox2_service_builder_t`](crate::iox2_service_builder_t) can be re-used with
+///   a call to [`iox2_node_service_builder`](crate::iox2_node_service_builder)!
+/// * The `attribute_verifier_handle` must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn iox2_service_builder_pub_sub_open_with_attributes(
+    service_builder_handle: iox2_service_builder_pub_sub_h,
+    attribute_verifier_handle: iox2_attribute_verifier_h_ref,
+    port_factory_struct_ptr: *mut iox2_port_factory_pub_sub_t,
+    port_factory_handle_ptr: *mut iox2_port_factory_pub_sub_h,
+) -> c_int {
+    let attribute_verifier_struct = &mut *attribute_verifier_handle.as_type();
+    let attribute_verifier = &attribute_verifier_struct.value.as_ref().0;
+
+    iox2_service_builder_pub_sub_open_create_impl(
+        service_builder_handle,
+        port_factory_struct_ptr,
+        port_factory_handle_ptr,
+        |service_builder| service_builder.open_with_attributes(attribute_verifier),
+        |service_builder| service_builder.open_with_attributes(attribute_verifier),
+    )
+}
+
 /// Creates a publish-subscribe service and returns a port factory to create publishers and subscribers.
 ///
 /// # Arguments
@@ -743,6 +917,44 @@ pub unsafe extern "C" fn iox2_service_builder_pub_sub_create(
         port_factory_handle_ptr,
         |service_builder| service_builder.create(),
         |service_builder| service_builder.create(),
+    )
+}
+
+/// Creates a publish-subscribe service and returns a port factory to create publishers and subscribers.
+/// The provided arguments are stored inside the services.
+///
+/// # Arguments
+///
+/// * `service_builder_handle` - Must be a valid [`iox2_service_builder_pub_sub_h`]
+///   obtained by [`iox2_service_builder_pub_sub`](crate::iox2_service_builder_pub_sub)
+/// * `port_factory_struct_ptr` - Must be either a NULL pointer or a pointer to a valid
+///   [`iox2_port_factory_pub_sub_t`]. If it is a NULL pointer, the storage will be allocated on the heap.
+/// * `port_factory_handle_ptr` - An uninitialized or dangling [`iox2_port_factory_pub_sub_h`] handle which will be initialized by this function call.
+///
+/// Returns IOX2_OK on success, an [`iox2_pub_sub_open_or_create_error_e`] otherwise. Note, only the errors annotated with `C_` are relevant.
+///
+/// # Safety
+///
+/// * The `service_builder_handle` is invalid after the return of this function and leads to undefined behavior if used in another function call!
+/// * The corresponding [`iox2_service_builder_t`](crate::iox2_service_builder_t) can be re-used with
+///   a call to [`iox2_node_service_builder`](crate::iox2_node_service_builder)!
+/// * The `attribute_verifier_handle` must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn iox2_service_builder_pub_sub_create_with_attributes(
+    service_builder_handle: iox2_service_builder_pub_sub_h,
+    attribute_specifier_handle: iox2_attribute_specifier_h_ref,
+    port_factory_struct_ptr: *mut iox2_port_factory_pub_sub_t,
+    port_factory_handle_ptr: *mut iox2_port_factory_pub_sub_h,
+) -> c_int {
+    let attribute_specifier_struct = &mut *attribute_specifier_handle.as_type();
+    let attribute_specifier = &attribute_specifier_struct.value.as_ref().0;
+
+    iox2_service_builder_pub_sub_open_create_impl(
+        service_builder_handle,
+        port_factory_struct_ptr,
+        port_factory_handle_ptr,
+        |service_builder| service_builder.create_with_attributes(attribute_specifier),
+        |service_builder| service_builder.create_with_attributes(attribute_specifier),
     )
 }
 

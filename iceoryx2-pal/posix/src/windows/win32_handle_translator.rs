@@ -18,11 +18,11 @@ use windows_sys::Win32::{
 };
 
 use crate::posix::{c_string_length, ntohs, types::*};
+use core::sync::atomic::Ordering;
 use core::{cell::UnsafeCell, panic};
 use iceoryx2_pal_concurrency_sync::iox_atomic::{IoxAtomicBool, IoxAtomicU32, IoxAtomicUsize};
 use iceoryx2_pal_concurrency_sync::mutex::Mutex;
 use iceoryx2_pal_concurrency_sync::WaitAction;
-use std::sync::atomic::Ordering;
 
 use super::win32_udp_port_to_uds_name::PortToUds;
 
@@ -88,10 +88,20 @@ impl UdsDatagramSocketHandle {
 }
 
 #[doc(hidden)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub struct SocketHandle {
     pub fd: usize,
+    pub recv_timeout: Option<timeval>,
+    pub send_timeout: Option<timeval>,
 }
+
+impl PartialEq for SocketHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.fd == other.fd
+    }
+}
+
+impl Eq for SocketHandle {}
 
 #[doc(hidden)]
 pub struct HandleTranslator {

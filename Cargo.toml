@@ -27,7 +27,8 @@ members = [
     "examples",
 
     "benchmarks/publish-subscribe",
-    "benchmarks/event"
+    "benchmarks/event", 
+    "benchmarks/queue"
 ]
 
 [workspace.package]
@@ -39,42 +40,41 @@ keywords = ["zero-copy", "communication", "ipc", "publish-subscribe", "request-r
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/eclipse-iceoryx/iceoryx2"
-rust-version = "1.75"
-version = "0.4.1"
+rust-version = "1.81"
+version = "0.5.0"
 
 [workspace.dependencies]
-iceoryx2-bb-threadsafe = { version = "0.4.1", path = "iceoryx2-bb/threadsafe/" }
-iceoryx2-bb-lock-free = { version = "0.4.1", path = "iceoryx2-bb/lock-free/" }
-iceoryx2-bb-container = { version = "0.4.1", path = "iceoryx2-bb/container/" }
-iceoryx2-bb-derive-macros = { version = "0.4.1", path = "iceoryx2-bb/derive-macros/" }
-iceoryx2-bb-elementary = { version = "0.4.1", path = "iceoryx2-bb/elementary/" }
-iceoryx2-bb-log = { version = "0.4.1", path = "iceoryx2-bb/log/" }
-iceoryx2-bb-memory = { version = "0.4.1", path = "iceoryx2-bb/memory/" }
-iceoryx2-bb-posix = { version = "0.4.1", path = "iceoryx2-bb/posix/" }
-iceoryx2-bb-system-types = { version = "0.4.1", path = "iceoryx2-bb/system-types/" }
-iceoryx2-bb-trait-tests = { version = "0.4.1", path = "iceoryx2-bb/trait-tests/" }
-iceoryx2-bb-testing = { version = "0.4.1", path = "iceoryx2-bb/testing/" }
+iceoryx2-bb-threadsafe = { version = "0.5.0", path = "iceoryx2-bb/threadsafe/" }
+iceoryx2-bb-lock-free = { version = "0.5.0", path = "iceoryx2-bb/lock-free/" }
+iceoryx2-bb-container = { version = "0.5.0", path = "iceoryx2-bb/container/" }
+iceoryx2-bb-derive-macros = { version = "0.5.0", path = "iceoryx2-bb/derive-macros/" }
+iceoryx2-bb-elementary = { version = "0.5.0", path = "iceoryx2-bb/elementary/" }
+iceoryx2-bb-log = { version = "0.5.0", path = "iceoryx2-bb/log/" }
+iceoryx2-bb-memory = { version = "0.5.0", path = "iceoryx2-bb/memory/" }
+iceoryx2-bb-posix = { version = "0.5.0", path = "iceoryx2-bb/posix/" }
+iceoryx2-bb-system-types = { version = "0.5.0", path = "iceoryx2-bb/system-types/" }
+iceoryx2-bb-trait-tests = { version = "0.5.0", path = "iceoryx2-bb/trait-tests/" }
+iceoryx2-bb-testing = { version = "0.5.0", path = "iceoryx2-bb/testing/" }
 
-iceoryx2-pal-concurrency-sync = { version = "0.4.1", path = "iceoryx2-pal/concurrency-sync/" }
-iceoryx2-pal-posix = { version = "0.4.1", path = "iceoryx2-pal/posix/" }
-iceoryx2-pal-configuration = { version = "0.4.1", path = "iceoryx2-pal/configuration/" }
+iceoryx2-pal-concurrency-sync = { version = "0.5.0", path = "iceoryx2-pal/concurrency-sync/" }
+iceoryx2-pal-posix = { version = "0.5.0", path = "iceoryx2-pal/posix/" }
+iceoryx2-pal-configuration = { version = "0.5.0", path = "iceoryx2-pal/configuration/" }
 
-iceoryx2-cal = { version = "0.4.1", path = "iceoryx2-cal" }
+iceoryx2-cal = { version = "0.5.0", path = "iceoryx2-cal" }
 
-iceoryx2-ffi = { version = "0.4.1", path = "iceoryx2-ffi/ffi" }
-iceoryx2-ffi-macros = { version = "0.4.1", path = "iceoryx2-ffi/ffi-macros" }
+iceoryx2-ffi = { version = "0.5.0", path = "iceoryx2-ffi/ffi" }
+iceoryx2-ffi-macros = { version = "0.5.0", path = "iceoryx2-ffi/ffi-macros" }
 
-iceoryx2 = { version = "0.4.1", path = "iceoryx2/" }
+iceoryx2 = { version = "0.5.0", path = "iceoryx2/" }
 
-iceoryx2-cli = { version = "0.4.1", path = "iceoryx2_cli/"}
+iceoryx2-cli = { version = "0.5.0", path = "iceoryx2_cli/"}
 
 
 
 anyhow = { version = "1.0.86" }
 bindgen = { version = "0.69.4" }
-bitflags = { version = "2.5.0" }
 cargo_metadata = { version = "0.18.1" }
-cbindgen = { version = "0.26.0" }
+cbindgen = { version = "0.27.0" }
 cc = { version = "1.0.98" }
 cdr = { version = "0.2.4" }
 clap = { version = "4.5.4", features = ["derive"] }
@@ -84,9 +84,9 @@ colored = { version = "2.1" }
 generic-tests = { version = "0.1.2" }
 human-panic = { version = "1.2.3" }
 lazy_static = { version = "1.4.0" }
+libc = { version = "0.2.169" }
 log = { version = "0.4.21" }
 once_cell = { version = "1.19.0" }
-ouroboros = { version = "0.18.4" }
 proc-macro2 = { version = "1.0.84" }
 quote = { version = "1.0.36" }
 ron = { version = "0.8" }

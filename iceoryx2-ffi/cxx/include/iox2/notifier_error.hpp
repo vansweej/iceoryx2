@@ -34,7 +34,15 @@ enum class NotifierNotifyError : uint8_t {
     /// is greater than the maximum supported [`EventId`] by the
     /// [`Service`]
     EventIdOutOfBounds,
+    /// The notification was delivered to all [`Listener`] ports
+    /// but the deadline contract, the maximum time span between two notifications, of the
+    /// [`Service`] was violated.
+    MissedDeadline,
+    /// The notification was delivered but the elapsed system time could not be acquired.
+    /// Therefore, it is unknown if the deadline was missed or not.
+    UnableToAcquireElapsedTime,
 };
+
 } // namespace iox2
 
 #endif

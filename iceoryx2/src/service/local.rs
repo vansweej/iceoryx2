@@ -15,7 +15,7 @@
 //! ```
 //! use iceoryx2::prelude::*;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
 //! let node = NodeBuilder::new().create::<local::Service>()?;
 //!
 //! // use `local` as communication variant
@@ -32,7 +32,9 @@
 //!
 //! See [`Service`](crate::service) for more detailed examples.
 
-use std::sync::Arc;
+extern crate alloc;
+
+use alloc::sync::Arc;
 
 use crate::service::dynamic_config::DynamicConfig;
 use iceoryx2_cal::shm_allocator::pool_allocator::PoolAllocator;
@@ -52,9 +54,10 @@ impl crate::service::Service for Service {
     type DynamicStorage = dynamic_storage::process_local::Storage<DynamicConfig>;
     type ServiceNameHasher = hash::sha1::Sha1;
     type SharedMemory = shared_memory::process_local::Memory<PoolAllocator>;
+    type ResizableSharedMemory =
+        resizable_shared_memory::dynamic::DynamicMemory<PoolAllocator, Self::SharedMemory>;
     type Connection = zero_copy_connection::process_local::Connection;
-    //type Event = event::process_local::EventImpl;
-    type Event = event::unix_datagram_socket::EventImpl;
+    type Event = event::process_local_socketpair::EventImpl;
     type Monitoring = monitoring::process_local::ProcessLocalMonitoring;
     type Reactor = reactor::posix_select::Reactor;
 }

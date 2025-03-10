@@ -20,6 +20,12 @@ pub mod event;
 /// based service.
 pub mod publish_subscribe;
 
+/// The dynamic service configuration of an
+/// [`MessagingPattern::RequestResponse`](crate::service::messaging_pattern::MessagingPattern::RequestResponse)
+/// based service.
+pub mod request_response;
+
+use core::fmt::Display;
 use iceoryx2_bb_container::queue::RelocatableContainer;
 use iceoryx2_bb_elementary::CallbackProgression;
 use iceoryx2_bb_lock_free::mpmc::{
@@ -28,7 +34,6 @@ use iceoryx2_bb_lock_free::mpmc::{
 };
 use iceoryx2_bb_log::{fail, fatal_panic};
 use iceoryx2_bb_memory::bump_allocator::BumpAllocator;
-use std::fmt::Display;
 
 use crate::{node::NodeId, port::port_identifiers::UniquePortId};
 
@@ -56,6 +61,7 @@ pub(crate) enum RemoveDeadNodeResult {
 
 #[derive(Debug)]
 pub(crate) enum MessagingPattern {
+    RequestResponse(request_response::DynamicConfig),
     PublishSubscribe(publish_subscribe::DynamicConfig),
     Event(event::DynamicConfig),
 }
@@ -68,7 +74,7 @@ pub struct DynamicConfig {
 }
 
 impl Display for DynamicConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "service::DynamicConfig {{ messaging_pattern: {:?} }}",
@@ -92,12 +98,13 @@ impl DynamicConfig {
         Container::<NodeId>::memory_size(max_number_of_nodes)
     }
 
-    pub(crate) unsafe fn init(&self, allocator: &BumpAllocator) {
+    pub(crate) unsafe fn init(&mut self, allocator: &BumpAllocator) {
         fatal_panic!(from self, when self.nodes.init(allocator),
             "This should never happen! Unable to initialize NodeId container.");
-        match &self.messaging_pattern {
-            MessagingPattern::PublishSubscribe(ref v) => v.init(allocator),
-            MessagingPattern::Event(ref v) => v.init(allocator),
+        match &mut self.messaging_pattern {
+            MessagingPattern::PublishSubscribe(ref mut v) => v.init(allocator),
+            MessagingPattern::Event(ref mut v) => v.init(allocator),
+            MessagingPattern::RequestResponse(ref mut v) => v.init(allocator),
         }
     }
 
@@ -113,6 +120,9 @@ impl DynamicConfig {
                 v.remove_dead_node_id(node_id, port_cleanup_callback)
             }
             MessagingPattern::Event(ref v) => v.remove_dead_node_id(node_id, port_cleanup_callback),
+            MessagingPattern::RequestResponse(ref v) => {
+                v.remove_dead_node_id(node_id, port_cleanup_callback)
+            }
         };
 
         let mut ret_val = Err(RemoveDeadNodeResult::NodeNotRegistered);
@@ -167,11 +177,20 @@ impl DynamicConfig {
         }
     }
 
+    pub(crate) fn request_response(&self) -> &request_response::DynamicConfig {
+        match &self.messaging_pattern {
+            MessagingPattern::RequestResponse(ref v) => v,
+            m => {
+                fatal_panic!(from self, "This should never happen! Trying to access request_response::DynamicConfig when the messaging pattern is actually {:?}.", m);
+            }
+        }
+    }
+
     pub(crate) fn publish_subscribe(&self) -> &publish_subscribe::DynamicConfig {
         match &self.messaging_pattern {
             MessagingPattern::PublishSubscribe(ref v) => v,
             m => {
-                fatal_panic!(from self, "This should never happen! Try to access publish_subscribe::DynamicConfig when the messaging pattern is actually {:?}.", m);
+                fatal_panic!(from self, "This should never happen! Trying to access publish_subscribe::DynamicConfig when the messaging pattern is actually {:?}.", m);
             }
         }
     }
@@ -180,7 +199,7 @@ impl DynamicConfig {
         match &self.messaging_pattern {
             MessagingPattern::Event(ref v) => v,
             m => {
-                fatal_panic!(from self, "This should never happen! Try to access event::DynamicConfig when the messaging pattern is actually {:?}.", m);
+                fatal_panic!(from self, "This should never happen! Trying to access event::DynamicConfig when the messaging pattern is actually {:?}.", m);
             }
         }
     }

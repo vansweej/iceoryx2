@@ -20,7 +20,7 @@
 //! use iceoryx2_bb_container::semantic_string::SemanticString;
 //! use iceoryx2_cal::dynamic_storage::process_local::*;
 //! use iceoryx2_cal::named_concept::*;
-//! use std::sync::atomic::{AtomicI64, Ordering};
+//! use core::sync::atomic::{AtomicI64, Ordering};
 //!
 //! let additional_size: usize = 1024;
 //! let storage_name = FileName::new(b"myDynStorage").unwrap();
@@ -37,6 +37,12 @@
 //! println!("New value: {}", reader.get().load(Ordering::Relaxed));
 //! ```
 
+use core::alloc::Layout;
+use core::any::Any;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
 use iceoryx2_bb_elementary::allocator::BaseAllocator;
 use iceoryx2_bb_log::{fail, fatal_panic};
 use iceoryx2_bb_memory::heap_allocator::HeapAllocator;
@@ -46,16 +52,15 @@ use iceoryx2_bb_system_types::file_path::FilePath;
 use iceoryx2_bb_system_types::path::Path;
 use iceoryx2_pal_concurrency_sync::iox_atomic::IoxAtomicBool;
 use once_cell::sync::Lazy;
-use std::alloc::Layout;
-use std::any::Any;
 use std::collections::HashMap;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::ptr::NonNull;
-use std::sync::atomic::Ordering;
-use std::sync::Arc;
+
+extern crate alloc;
+use alloc::sync::Arc;
 
 pub use crate::dynamic_storage::*;
+use crate::named_concept::{
+    NamedConceptDoesExistError, NamedConceptListError, NamedConceptRemoveError,
+};
 use crate::static_storage::file::NamedConceptConfiguration;
 
 use self::dynamic_storage_configuration::DynamicStorageConfiguration;
@@ -142,8 +147,8 @@ impl<T: Send + Sync + Debug> NamedConceptConfiguration for Configuration<T> {
 
 impl<T> StorageDetails<T> {
     fn new(value: T, additional_size: u64) -> Self {
-        let size = std::mem::size_of::<T>() + additional_size as usize;
-        let align = std::mem::align_of::<T>();
+        let size = core::mem::size_of::<T>() + additional_size as usize;
+        let align = core::mem::align_of::<T>();
         let layout = unsafe { Layout::from_size_align_unchecked(size, align) };
         let new_self = Self {
             data_ptr: fatal_panic!(from "StorageDetails::new", when HeapAllocator::new()
@@ -204,12 +209,12 @@ impl<T: Send + Sync + Debug + 'static> NamedConceptMgmt for Storage<T> {
     fn does_exist_cfg(
         name: &FileName,
         config: &Self::Configuration,
-    ) -> Result<bool, crate::static_storage::file::NamedConceptDoesExistError> {
+    ) -> Result<bool, NamedConceptDoesExistError> {
         let msg = "Unable to check if dynamic_storage::process_local exists";
         let origin = "dynamic_storage::process_local::Storage::does_exist_cfg()";
 
-        let guard = fatal_panic!(from origin,
-                        when PROCESS_LOCAL_STORAGE.lock(),
+        let guard = fail!(from origin, when PROCESS_LOCAL_STORAGE.lock(),
+                        with NamedConceptDoesExistError::InternalError,
                         "{} since the lock could not be acquired.", msg);
 
         match guard.get(&config.path_for(name)) {
@@ -218,14 +223,12 @@ impl<T: Send + Sync + Debug + 'static> NamedConceptMgmt for Storage<T> {
         }
     }
 
-    fn list_cfg(
-        config: &Self::Configuration,
-    ) -> Result<Vec<FileName>, crate::static_storage::file::NamedConceptListError> {
+    fn list_cfg(config: &Self::Configuration) -> Result<Vec<FileName>, NamedConceptListError> {
         let msg = "Unable to list all dynamic_storage::process_local";
         let origin = "dynamic_storage::process_local::Storage::list_cfg()";
 
-        let guard = fatal_panic!(from origin,
-                                 when PROCESS_LOCAL_STORAGE.lock(),
+        let guard = fail!(from origin, when PROCESS_LOCAL_STORAGE.lock(),
+                                with NamedConceptListError::InternalError,
                                 "{} since the lock could not be acquired.", msg);
 
         let mut result = vec![];
@@ -241,21 +244,22 @@ impl<T: Send + Sync + Debug + 'static> NamedConceptMgmt for Storage<T> {
     unsafe fn remove_cfg(
         name: &FileName,
         cfg: &Self::Configuration,
-    ) -> Result<bool, crate::static_storage::file::NamedConceptRemoveError> {
+    ) -> Result<bool, NamedConceptRemoveError> {
         let storage_name = cfg.path_for(name);
 
         let msg = "Unable to remove dynamic_storage::process_local";
         let origin = "dynamic_storage::process_local::Storage::remove_cfg()";
 
-        let mut guard = fatal_panic!(from origin, when PROCESS_LOCAL_STORAGE.lock()
-                                , "{} since the lock could not be acquired.", msg);
+        let mut guard = fail!(from origin, when PROCESS_LOCAL_STORAGE.lock(),
+                                with NamedConceptRemoveError::InternalError,
+                                "{} since the lock could not be acquired.", msg);
 
         let mut entry = guard.get_mut(&storage_name);
         if entry.is_none() {
             return Ok(false);
         }
 
-        std::ptr::drop_in_place(
+        core::ptr::drop_in_place(
             entry
                 .as_mut()
                 .unwrap()
@@ -323,9 +327,7 @@ pub struct Builder<'builder, T: Send + Sync + Debug> {
     _phantom_data: PhantomData<T>,
 }
 
-impl<'builder, T: Send + Sync + Debug + 'static> NamedConceptBuilder<Storage<T>>
-    for Builder<'builder, T>
-{
+impl<T: Send + Sync + Debug + 'static> NamedConceptBuilder<Storage<T>> for Builder<'_, T> {
     fn new(storage_name: &FileName) -> Self {
         Self {
             name: *storage_name,
@@ -343,7 +345,7 @@ impl<'builder, T: Send + Sync + Debug + 'static> NamedConceptBuilder<Storage<T>>
     }
 }
 
-impl<'builder, T: Send + Sync + Debug + 'static> Builder<'builder, T> {
+impl<T: Send + Sync + Debug + 'static> Builder<'_, T> {
     fn open_impl(
         &self,
         guard: &mut MutexGuard<'static, 'static, HashMap<FilePath, StorageEntry>>,
@@ -391,7 +393,7 @@ impl<'builder, T: Send + Sync + Debug + 'static> Builder<'builder, T> {
         ));
 
         let value = storage_details.data_ptr;
-        let supplementary_start = (value as usize + std::mem::size_of::<T>()) as *mut u8;
+        let supplementary_start = (value as usize + core::mem::size_of::<T>()) as *mut u8;
 
         let mut allocator = BumpAllocator::new(
             unsafe { NonNull::new_unchecked(supplementary_start) },

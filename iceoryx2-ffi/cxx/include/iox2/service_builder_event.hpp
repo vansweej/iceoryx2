@@ -17,6 +17,7 @@
 #include "iox/expected.hpp"
 #include "iox2/attribute_specifier.hpp"
 #include "iox2/attribute_verifier.hpp"
+#include "iox2/event_id.hpp"
 #include "iox2/internal/iceoryx2.hpp"
 #include "iox2/port_factory_event.hpp"
 #include "iox2/service_builder_event_error.hpp"
@@ -49,6 +50,38 @@ class ServiceBuilderEvent {
     IOX_BUILDER_OPTIONAL(uint64_t, max_listeners);
 
   public:
+    /// If the [`Service`] is created it defines the event that shall be emitted by every
+    /// [`Notifier`] before it is dropped. If [`None`] is
+    /// provided a [`Notifier`] will not emit an event.
+    auto notifier_dropped_event(EventId event_id) && -> ServiceBuilderEvent&&;
+
+    /// If the [`Service`] is created it defines the event that shall be emitted by every newly
+    /// created [`Notifier`].
+    auto notifier_created_event(EventId event_id) && -> ServiceBuilderEvent&&;
+
+    /// If the [`Service`] is created it defines the event that shall be emitted when a
+    /// [`Notifier`] is identified as dead. If [`None`] is
+    /// provided no event will be emitted.
+    auto notifier_dead_event(EventId event_id) && -> ServiceBuilderEvent&&;
+
+    /// Enables the deadline property of the service. There must be a notification emitted by any
+    /// [`Notifier`] after at least the provided `deadline`.
+    auto deadline(iox::units::Duration deadline) && -> ServiceBuilderEvent&&;
+
+    /// If the [`Service`] is created it disables sending an event when a notifier was dropped.
+    auto disable_notifier_dropped_event() && -> ServiceBuilderEvent&&;
+
+    /// If the [`Service`] is created it disables sending an event when a new notifier was created.
+    auto disable_notifier_created_event() && -> ServiceBuilderEvent&&;
+
+    /// If the [`Service`] is created it disables sending an event when a notifier was identified
+    /// as dead.
+    auto disable_notifier_dead_event() && -> ServiceBuilderEvent&&;
+
+    /// Disables the deadline property of the service. [`Notifier`]
+    /// can signal notifications at any rate.
+    auto disable_deadline() && -> ServiceBuilderEvent&&;
+
     /// If the [`Service`] exists, it will be opened otherwise a new [`Service`] will be
     /// created.
     auto open_or_create() && -> iox::expected<PortFactoryEvent<S>, EventOpenOrCreateError>;
@@ -83,7 +116,16 @@ class ServiceBuilderEvent {
 
     void set_parameters();
 
-    iox2_service_builder_event_h m_handle;
+    iox2_service_builder_event_h m_handle = nullptr;
+
+    iox::optional<EventId> m_notifier_dead_event;
+    iox::optional<EventId> m_notifier_created_event;
+    iox::optional<EventId> m_notifier_dropped_event;
+    iox::optional<iox::units::Duration> m_deadline;
+    bool m_verify_notifier_dead_event = false;
+    bool m_verify_notifier_created_event = false;
+    bool m_verify_notifier_dropped_event = false;
+    bool m_verify_deadline = false;
 };
 } // namespace iox2
 

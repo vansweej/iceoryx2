@@ -5,6 +5,28 @@ iceoryx2 introduces global configuration settings. It enables the concurrent
 execution of multiple iceoryx2 setups on the same machine or within a single
 process by employing distinct configurations.
 
+When **iceoryx2** is started without an explicitly loaded configuration,
+such as:
+
+```rust
+use iceoryx2::config::Config;
+use iceoryx2_bb_system_types::file_path::FilePath;
+use iceoryx2_bb_container::semantic_string::SemanticString;
+
+Config::setup_global_config_from_file(
+    &FilePath::new(b"my/custom/config/file.toml")?)?;
+```
+
+it will automatically search for a configuration file in the following
+locations, in order:
+
+1. `$PWD/config/iceoryx2.toml`
+2. `$HOME/.config/iceoryx2/iceoryx2.toml`
+3. `/etc/iceoryx2/iceoryx2.toml`
+
+If no configuration file is found in these locations, **iceoryx2** will use
+its default settings.
+
 ## Sections
 
 The configuration is organized into two main sections:
@@ -63,6 +85,12 @@ Adjusting `global` settings ensures a non-interfering setup.
 * `defaults.event.max-nodes` - [int]: Maximum number of nodes.
 * `defaults.event.event-id-max-value` - [int]: Greatest value an [`EventId`] can
   have.
+* `defaults.event.notifier-created-event` - [Option\<int\>]: If defined,
+    it defines the event id that is emitted when a new notifier is created.
+* `defaults.event.notifier-dropped-event` - [Option\<int\>]: If defined,
+    it defines the event id that is emitted when a notifier is destroyed.
+* `defaults.event.notifier-dead-event` - [Option\<int\>]: If defined,
+    it defines the event id that is emitted when a dead notifier is cleaned up.
 
 ### Service: Publish Subscribe Messaging Pattern
 
@@ -88,3 +116,32 @@ Adjusting `global` settings ensures a non-interfering setup.
   Expired connection buffer size of the subscriber. Connections to publishers
   are expired when the publisher disconnected from the service and the
   connection contains unconsumed samples.
+
+### Service: Request Response Messaging Pattern
+
+* `defaults.request-response.enable-safe-overflow-for-requests` -
+  [`true`|`false`]: Defines if the request buffer of the service safely
+  overflows.
+* `defaults.request-response.enable-safe-overflow-for-responses` -
+  [`true`|`false`]: Defines if the request buffer of the service safely
+  overflows.
+* `defaults.request-response.max-active-responses` - [int]:
+  The maximum of active responses a [`crate::port::server::Server`] can hold in
+  parallel.
+* `defaults.request-response.max-active-requests` - [int]:
+  The maximum of active requests a client can hold in parallel.
+* `defaults.request-response.max-borrowed-responses` - [int]:
+  The maximum number of responses a client can borrow from an active request.
+* `defaults.request-response.max-borrowed-requests` - [int]:
+  The maximum number of requests a server can borrow.
+* `defaults.request-response.max-response-buffer-size` - [int]:
+  The maximum buffer size for responses for an active request.
+* `defaults.request-response.max-request-buffer-size` - [int]:
+  The maximum buffer size for requests for a server.
+* `defaults.request-response.max-servers` - [int]:
+  The maximum amount of supported servers.
+* `defaults.request-response.max-clients` - [int]:
+  The maximum amount of supported clients.
+* `defaults.request-response.max-nodes` - [int]:
+  The maximum amount of supported nodes. Defines indirectly how many
+  processes can open the service at the same time.

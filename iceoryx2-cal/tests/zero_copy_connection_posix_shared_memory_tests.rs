@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 mod zero_copy_connection_posix_shared_memory_tests {
+    use core::time::Duration;
     use iceoryx2_bb_elementary::math::ToB64;
     use iceoryx2_bb_posix::creation_mode::CreationMode;
     use iceoryx2_bb_posix::permission::Permission;
@@ -19,7 +20,6 @@ mod zero_copy_connection_posix_shared_memory_tests {
     use iceoryx2_bb_testing::assert_that;
     use iceoryx2_cal::named_concept::*;
     use iceoryx2_cal::zero_copy_connection::*;
-    use std::time::Duration;
 
     const TIMEOUT: Duration = Duration::from_millis(100);
 
@@ -49,9 +49,9 @@ mod zero_copy_connection_posix_shared_memory_tests {
         let start = std::time::SystemTime::now();
         let sut = <Sut as ZeroCopyConnection>::Builder::new(&storage_name)
             .timeout(TIMEOUT)
-            .number_of_samples(1)
+            .number_of_samples_per_segment(1)
             .receiver_max_borrowed_samples(1)
-            .create_sender(1);
+            .create_sender();
 
         assert_that!(sut, is_err);
         assert_that!(sut.err().unwrap(), eq ZeroCopyCreationError::InitializationNotYetFinalized);

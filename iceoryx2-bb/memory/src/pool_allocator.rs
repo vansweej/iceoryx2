@@ -47,18 +47,18 @@
 //!                              Layout::from_size_align_unchecked(32, 4))};
 //! ```
 
+use iceoryx2_bb_elementary::bump_allocator::BumpAllocator;
 use iceoryx2_bb_elementary::math::align;
-use iceoryx2_bb_elementary::math::align_to;
 use iceoryx2_bb_elementary::relocatable_container::*;
 use iceoryx2_bb_lock_free::mpmc::unique_index_set::*;
 
+pub use core::alloc::Layout;
+use core::cell::UnsafeCell;
+use core::sync::atomic::Ordering;
 pub use iceoryx2_bb_elementary::allocator::*;
 use iceoryx2_bb_log::fail;
 use iceoryx2_bb_log::fatal_panic;
 use iceoryx2_pal_concurrency_sync::iox_atomic::IoxAtomicBool;
-pub use std::alloc::Layout;
-use std::cell::UnsafeCell;
-use std::sync::atomic::Ordering;
 
 #[derive(Debug)]
 pub struct PoolAllocator {
@@ -100,6 +100,20 @@ impl PoolAllocator {
         self.bucket_alignment
     }
 
+    /// Releases an previously allocated bucket of memory.
+    ///
+    /// # Safety
+    ///
+    ///  * `ptr` must be allocated previously with [`PoolAllocator::allocate()`] or
+    ///    [`PoolAllocator::allocate_zeroed()`]
+    ///
+    pub unsafe fn deallocate_bucket(&self, ptr: NonNull<u8>) {
+        self.verify_init("deallocate");
+
+        self.buckets
+            .release_raw_index(self.get_index(ptr), ReleaseMode::Default);
+    }
+
     /// # Safety
     ///
     ///  * `ptr` must point to a piece of memory of length `size`
@@ -125,7 +139,7 @@ impl PoolAllocator {
     ///  * must be called exactly once before any other method can be called
     ///
     pub unsafe fn init<Allocator: BaseAllocator>(
-        &self,
+        &mut self,
         allocator: &Allocator,
     ) -> Result<(), AllocationError> {
         if self.is_memory_initialized.load(Ordering::Relaxed) {
@@ -190,7 +204,7 @@ impl BaseAllocator for PoolAllocator {
 
         match unsafe { self.buckets.acquire_raw_index() } {
             Ok(v) => Ok(unsafe {
-                NonNull::new_unchecked(std::slice::from_raw_parts_mut(
+                NonNull::new_unchecked(core::slice::from_raw_parts_mut(
                     (self.start + v as usize * self.bucket_size) as *mut u8,
                     layout.size(),
                 ))
@@ -204,10 +218,7 @@ impl BaseAllocator for PoolAllocator {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
-        self.verify_init("deallocate");
-
-        self.buckets
-            .release_raw_index(self.get_index(ptr), ReleaseMode::Default);
+        self.deallocate_bucket(ptr);
     }
 }
 
@@ -239,7 +250,7 @@ impl Allocator for PoolAllocator {
                 "{} since the new size {} exceeds the maximum supported size.", msg, new_layout.size());
         }
 
-        Ok(NonNull::new(std::slice::from_raw_parts_mut(
+        Ok(NonNull::new(core::slice::from_raw_parts_mut(
             ptr.as_ptr(),
             new_layout.size(),
         ))
@@ -267,7 +278,7 @@ impl Allocator for PoolAllocator {
                 "{} since the new alignment {} exceeds the maximum supported alignment.", msg, new_layout.align() );
         }
 
-        Ok(NonNull::new(std::slice::from_raw_parts_mut(
+        Ok(NonNull::new(core::slice::from_raw_parts_mut(
             ptr.as_ptr(),
             new_layout.size(),
         ))
@@ -315,13 +326,13 @@ impl<const MAX_NUMBER_OF_BUCKETS: usize> FixedSizePoolAllocator<MAX_NUMBER_OF_BU
         let bucket_size = align(bucket_layout.size(), bucket_layout.align());
         let number_of_buckets = (ptr.as_ptr() as usize + size - adjusted_start) / bucket_size;
 
-        FixedSizePoolAllocator {
+        let mut new_self = FixedSizePoolAllocator {
             state: PoolAllocator {
                 buckets: unsafe {
-                    UniqueIndexSet::new(
-                        std::cmp::min(number_of_buckets, MAX_NUMBER_OF_BUCKETS),
-                        align_to::<UnsafeCell<u32>>(std::mem::size_of::<PoolAllocator>()) as isize,
-                    )
+                    UniqueIndexSet::new_uninit(core::cmp::min(
+                        number_of_buckets,
+                        MAX_NUMBER_OF_BUCKETS,
+                    ))
                 },
                 bucket_size: bucket_layout.size(),
                 bucket_alignment: bucket_layout.align(),
@@ -329,9 +340,19 @@ impl<const MAX_NUMBER_OF_BUCKETS: usize> FixedSizePoolAllocator<MAX_NUMBER_OF_BU
                 size,
                 is_memory_initialized: IoxAtomicBool::new(true),
             },
-            next_free_index: std::array::from_fn(|i| UnsafeCell::new(i as u32 + 1)),
+            next_free_index: core::array::from_fn(|i| UnsafeCell::new(i as u32 + 1)),
             next_free_index_plus_one: UnsafeCell::new(MAX_NUMBER_OF_BUCKETS as u32 + 1),
-        }
+        };
+
+        let allocator = BumpAllocator::new(core::ptr::addr_of!(new_self.next_free_index) as usize);
+        unsafe {
+            new_self
+                .state
+                .buckets
+                .init(&allocator)
+                .expect("All required memory is preallocated.")
+        };
+        new_self
     }
 }
 

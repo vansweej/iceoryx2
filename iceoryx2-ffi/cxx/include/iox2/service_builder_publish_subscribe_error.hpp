@@ -13,6 +13,7 @@
 #ifndef IOX2_SERVICE_BUILDER_PUBLISH_SUBSCRIBE_ERROR_HPP
 #define IOX2_SERVICE_BUILDER_PUBLISH_SUBSCRIBE_ERROR_HPP
 
+#include "iox2/iceoryx2.h"
 #include <cstdint>
 
 namespace iox2 {
@@ -87,13 +88,6 @@ enum class PublishSubscribeCreateError : uint8_t {
     InternalFailure,
     /// Multiple processes are trying to create the same [`Service`].
     IsBeingCreatedByAnotherInstance,
-    /// The system has cleaned up the [`Service`] but there are still endpoints
-    /// like
-    /// [`Publisher`] or
-    /// [`Subscriber`] alive or
-    /// [`Sample`] or
-    /// [`SampleMut`] in use.
-    OldConnectionsStillActive,
     /// The [`Service`]s creation timeout has passed and it is still not
     /// initialized. Can be caused
     /// by a process that crashed during [`Service`] creation.
@@ -180,7 +174,11 @@ enum class PublishSubscribeOpenOrCreateError : uint8_t {
     /// initialized. Can be caused
     /// by a process that crashed during [`Service`] creation.
     CreateHangsInCreation,
+    /// Can occur when another process creates and removes the same [`Service`] repeatedly with a
+    /// high frequency.
+    SystemInFlux,
 };
+
 } // namespace iox2
 
 #endif

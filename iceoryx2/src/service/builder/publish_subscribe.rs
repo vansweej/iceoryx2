@@ -14,7 +14,7 @@
 //!
 //! See [`crate::service`]
 //!
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::service;
 use crate::service::dynamic_config::publish_subscribe::DynamicConfigSettings;
@@ -22,6 +22,7 @@ use crate::service::header::publish_subscribe::Header;
 use crate::service::port_factory::publish_subscribe;
 use crate::service::static_config::messaging_pattern::MessagingPattern;
 use crate::service::*;
+use builder::RETRY_LIMIT;
 use iceoryx2_bb_elementary::alignment::Alignment;
 use iceoryx2_bb_log::{fail, fatal_panic, warn};
 use iceoryx2_cal::dynamic_storage::DynamicStorageCreateError;
@@ -39,6 +40,11 @@ use super::{OpenDynamicStorageFailure, ServiceState};
 #[derive(Debug)]
 #[doc(hidden)]
 pub struct CustomHeaderMarker {}
+
+#[repr(C)]
+#[derive(Debug)]
+#[doc(hidden)]
+pub struct CustomPayloadMarker(u8);
 
 /// Errors that can occur when an existing [`MessagingPattern::PublishSubscribe`] [`Service`] shall be opened.
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
@@ -82,13 +88,13 @@ pub enum PublishSubscribeOpenError {
     IsMarkedForDestruction,
 }
 
-impl std::fmt::Display for PublishSubscribeOpenError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for PublishSubscribeOpenError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "PublishSubscribeOpenError::{:?}", self)
     }
 }
 
-impl std::error::Error for PublishSubscribeOpenError {}
+impl core::error::Error for PublishSubscribeOpenError {}
 
 impl From<ServiceAvailabilityState> for PublishSubscribeOpenError {
     fn from(value: ServiceAvailabilityState) -> Self {
@@ -134,13 +140,13 @@ pub enum PublishSubscribeCreateError {
     HangsInCreation,
 }
 
-impl std::fmt::Display for PublishSubscribeCreateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for PublishSubscribeCreateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "PublishSubscribeCreateError::{:?}", self)
     }
 }
 
-impl std::error::Error for PublishSubscribeCreateError {}
+impl core::error::Error for PublishSubscribeCreateError {}
 
 impl From<ServiceAvailabilityState> for PublishSubscribeCreateError {
     fn from(value: ServiceAvailabilityState) -> Self {
@@ -176,6 +182,9 @@ pub enum PublishSubscribeOpenOrCreateError {
     PublishSubscribeOpenError(PublishSubscribeOpenError),
     /// Failures that can occur when a [`Service`] could not be created.
     PublishSubscribeCreateError(PublishSubscribeCreateError),
+    /// Can occur when another process creates and removes the same [`Service`] repeatedly with a
+    /// high frequency.
+    SystemInFlux,
 }
 
 impl From<ServiceAvailabilityState> for PublishSubscribeOpenOrCreateError {
@@ -196,13 +205,13 @@ impl From<PublishSubscribeCreateError> for PublishSubscribeOpenOrCreateError {
     }
 }
 
-impl std::fmt::Display for PublishSubscribeOpenOrCreateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for PublishSubscribeOpenOrCreateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         std::write!(f, "PublishSubscribeOpenOrCreateError::{:?}", self)
     }
 }
 
-impl std::error::Error for PublishSubscribeOpenOrCreateError {}
+impl core::error::Error for PublishSubscribeOpenOrCreateError {}
 
 /// Builder to create new [`MessagingPattern::PublishSubscribe`] based [`Service`]s
 ///
@@ -372,7 +381,7 @@ impl<Payload: Debug + ?Sized, UserHeader: Debug, ServiceType: service::Service>
     }
 
     /// Validates configuration and overrides the invalid setting with meaningful values.
-    fn adjust_attributes_to_meaningful_values(&mut self) {
+    fn adjust_configuration_to_meaningful_values(&mut self) {
         let origin = format!("{:?}", self);
         let settings = self.base.service_config.publish_subscribe_mut();
 
@@ -407,7 +416,7 @@ impl<Payload: Debug + ?Sized, UserHeader: Debug, ServiceType: service::Service>
         }
     }
 
-    fn verify_service_attributes(
+    fn verify_service_configuration(
         &self,
         existing_settings: &static_config::StaticConfig,
         required_attributes: &AttributeVerifier,
@@ -497,7 +506,7 @@ impl<Payload: Debug + ?Sized, UserHeader: Debug, ServiceType: service::Service>
         publish_subscribe::PortFactory<ServiceType, Payload, UserHeader>,
         PublishSubscribeCreateError,
     > {
-        self.adjust_attributes_to_meaningful_values();
+        self.adjust_configuration_to_meaningful_values();
 
         let msg = "Unable to create publish subscribe service";
 
@@ -605,7 +614,6 @@ impl<Payload: Debug + ?Sized, UserHeader: Debug, ServiceType: service::Service>
         publish_subscribe::PortFactory<ServiceType, Payload, UserHeader>,
         PublishSubscribeOpenError,
     > {
-        const OPEN_RETRY_LIMIT: usize = 5;
         let msg = "Unable to open publish subscribe service";
 
         let mut service_open_retry_count = 0;
@@ -617,7 +625,7 @@ impl<Payload: Debug + ?Sized, UserHeader: Debug, ServiceType: service::Service>
                 }
                 Some((static_config, static_storage)) => {
                     let pub_sub_static_config =
-                        self.verify_service_attributes(&static_config, attributes)?;
+                        self.verify_service_configuration(&static_config, attributes)?;
 
                     let service_tag = self
                         .base
@@ -633,6 +641,12 @@ impl<Payload: Debug + ?Sized, UserHeader: Debug, ServiceType: service::Service>
                             fail!(from self, with PublishSubscribeOpenError::ExceedsMaxNumberOfNodes,
                                 "{} since it would exceed the maximum number of supported nodes.", msg);
                         }
+                        Err(OpenDynamicStorageFailure::DynamicStorageOpenError(
+                            DynamicStorageOpenError::DoesNotExist,
+                        )) => {
+                            fail!(from self, with PublishSubscribeOpenError::ServiceInCorruptedState,
+                                "{} since the dynamic segment of the service is missing.", msg);
+                        }
                         Err(e) => {
                             if self.is_service_available(msg)?.is_none() {
                                 fail!(from self, with PublishSubscribeOpenError::DoesNotExist,
@@ -641,7 +655,7 @@ impl<Payload: Debug + ?Sized, UserHeader: Debug, ServiceType: service::Service>
 
                             service_open_retry_count += 1;
 
-                            if OPEN_RETRY_LIMIT < service_open_retry_count {
+                            if RETRY_LIMIT < service_open_retry_count {
                                 fail!(from self, with PublishSubscribeOpenError::ServiceInCorruptedState,
                                 "{} since the dynamic service information could not be opened ({:?}). This could indicate a corrupted system or a misconfigured system where services are created/removed with a high frequency.",
                                 msg, e);
@@ -680,7 +694,16 @@ impl<Payload: Debug + ?Sized, UserHeader: Debug, ServiceType: service::Service>
     > {
         let msg = "Unable to open or create publish subscribe service";
 
+        let mut retry_count = 0;
         loop {
+            if RETRY_LIMIT < retry_count {
+                fail!(from self,
+                      with PublishSubscribeOpenOrCreateError::SystemInFlux,
+                      "{} since an instance is creating and removing the same service repeatedly.",
+                      msg);
+            }
+            retry_count += 1;
+
             match self.is_service_available(msg)? {
                 Some(_) => match self.open_impl(attributes) {
                     Ok(factory) => return Ok(factory),
@@ -716,7 +739,9 @@ impl<Payload: Debug + ?Sized, UserHeader: Debug, ServiceType: service::Service>
     }
 }
 
-impl<UserHeader: Debug, ServiceType: service::Service> Builder<[u8], UserHeader, ServiceType> {
+impl<UserHeader: Debug, ServiceType: service::Service>
+    Builder<[CustomPayloadMarker], UserHeader, ServiceType>
+{
     #[doc(hidden)]
     pub unsafe fn __internal_set_payload_type_details(mut self, value: &TypeDetail) -> Self {
         self.override_payload_type = Some(value.clone());

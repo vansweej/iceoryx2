@@ -10,8 +10,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use std::cell::UnsafeCell;
-use std::sync::Arc;
+use core::cell::UnsafeCell;
+
+extern crate alloc;
+use alloc::sync::Arc;
 
 use iceoryx2_bb_log::fail;
 use iceoryx2_cal::named_concept::NamedConceptBuilder;
@@ -39,7 +41,6 @@ impl<Service: service::Service> Connection<Service> {
         this: &SubscriberConnections<Service>,
         subscriber_details: SubscriberDetails,
         number_of_samples: usize,
-        max_slice_len: usize,
     ) -> Result<Self, ZeroCopyCreationError> {
         let msg = format!(
             "Unable to establish connection to subscriber {:?} from publisher {:?}",
@@ -57,9 +58,10 @@ impl<Service: service::Service> Connection<Service> {
                                 .buffer_size(subscriber_details.buffer_size)
                                 .receiver_max_borrowed_samples(this.static_config.subscriber_max_borrowed_samples)
                                 .enable_safe_overflow(this.static_config.enable_safe_overflow)
-                                .number_of_samples(number_of_samples)
+                                .number_of_samples_per_segment(number_of_samples)
+                                .max_supported_shared_memory_segments(this.max_number_of_segments)
                                 .timeout(this.shared_node.config().global.service.creation_timeout)
-                                .create_sender(this.static_config.message_type_details().sample_layout(max_slice_len).size()),
+                                .create_sender(),
                         "{}.", msg);
 
         Ok(Self {
@@ -76,6 +78,7 @@ pub(crate) struct SubscriberConnections<Service: service::Service> {
     shared_node: Arc<SharedNode<Service>>,
     pub(crate) static_config: StaticConfig,
     number_of_samples: usize,
+    max_number_of_segments: u8,
 }
 
 impl<Service: service::Service> SubscriberConnections<Service> {
@@ -85,6 +88,7 @@ impl<Service: service::Service> SubscriberConnections<Service> {
         port_id: UniquePublisherId,
         static_config: &StaticConfig,
         number_of_samples: usize,
+        max_number_of_segments: u8,
     ) -> Self {
         Self {
             connections: (0..capacity).map(|_| UnsafeCell::new(None)).collect(),
@@ -92,6 +96,7 @@ impl<Service: service::Service> SubscriberConnections<Service> {
             port_id,
             static_config: static_config.clone(),
             number_of_samples,
+            max_number_of_segments,
         }
     }
 
@@ -116,13 +121,11 @@ impl<Service: service::Service> SubscriberConnections<Service> {
         &self,
         index: usize,
         subscriber_details: SubscriberDetails,
-        max_slice_len: usize,
     ) -> Result<(), ZeroCopyCreationError> {
         *self.get_mut(index) = Some(Connection::new(
             self,
             subscriber_details,
             self.number_of_samples,
-            max_slice_len,
         )?);
 
         Ok(())

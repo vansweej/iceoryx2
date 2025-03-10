@@ -14,9 +14,24 @@
 //! [`Feature`]s.
 
 use enum_iterator::{all, Sequence};
+use iceoryx2_bb_container::semantic_string::*;
 use iceoryx2_bb_log::{fatal_panic, warn};
+use iceoryx2_bb_system_types::path::Path;
 use iceoryx2_pal_posix::posix::Struct;
 use iceoryx2_pal_posix::*;
+
+/// The global config path of the system, where all config files shall be stored.
+pub fn get_global_config_path() -> Path {
+    fatal_panic!(from "get_global_config_path",
+        when Path::new(posix::GLOBAL_CONFIG_PATH.as_bytes()),
+        "This should never happen! The underlying platform GLOBAL_CONFIG_PATH variable contains a path with invalid characters.")
+}
+
+pub fn get_user_config_path() -> Path {
+    fatal_panic!(from "get_user_config_path",
+        when Path::new(posix::USER_CONFIG_PATH.as_bytes()),
+        "This should never happen! The underlying platform USER_CONFIG_PATH variable contains a path with invalid characters.")
+}
 
 /// Generic information about the POSIX system.
 /// ```
@@ -252,7 +267,7 @@ impl ProcessResourceLimit {
         }
 
         let new_value = posix::rlimit {
-            rlim_cur: std::cmp::min(value, hard_limit) as _,
+            rlim_cur: core::cmp::min(value, hard_limit) as _,
             rlim_max: self.hard_limit() as _,
         };
 
@@ -276,7 +291,7 @@ impl ProcessResourceLimit {
 
         let new_value = posix::rlimit {
             rlim_cur: soft_limit as _,
-            rlim_max: std::cmp::max(value, soft_limit) as _,
+            rlim_max: core::cmp::max(value, soft_limit) as _,
         };
 
         if unsafe { posix::setrlimit(*self as i32, &new_value) } == -1 {

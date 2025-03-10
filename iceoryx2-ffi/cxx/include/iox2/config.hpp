@@ -63,7 +63,7 @@ class Node {
     friend class Global;
     explicit Node(iox2_config_h* config);
 
-    iox2_config_h* m_config;
+    iox2_config_h* m_config = nullptr;
 };
 
 /// All configurable settings of a [`Service`].
@@ -103,7 +103,7 @@ class Service {
     friend class Global;
     explicit Service(iox2_config_h* config);
 
-    iox2_config_h* m_config;
+    iox2_config_h* m_config = nullptr;
 };
 
 /// The global settings
@@ -128,7 +128,7 @@ class Global {
     friend class ::iox2::Config;
     explicit Global(iox2_config_h* config);
 
-    iox2_config_h* m_config;
+    iox2_config_h* m_config = nullptr;
 };
 
 /// Default settings for the publish-subscribe messaging pattern. These settings are used unless
@@ -188,7 +188,7 @@ class PublishSubscribe {
     friend class Defaults;
     explicit PublishSubscribe(iox2_config_h* config);
 
-    iox2_config_h* m_config;
+    iox2_config_h* m_config = nullptr;
 };
 
 /// Default settings for the event messaging pattern. These settings are used unless
@@ -212,12 +212,30 @@ class Event {
     auto event_id_max_value() && -> size_t;
     /// Set the largest event id supported by the event service
     void set_event_id_max_value(size_t value) &&;
+    /// Defines the event id value that is emitted after a new notifier was created.
+    auto notifier_created_event() && -> iox::optional<size_t>;
+    /// Sets the event id value that is emitted after a new notifier was created.
+    void set_notifier_created_event(iox::optional<size_t> value) &&;
+    /// Defines the event id value that is emitted before a new notifier is dropped.
+    auto notifier_dropped_event() && -> iox::optional<size_t>;
+    /// Sets the event id value that is emitted before a new notifier is dropped.
+    void set_notifier_dropped_event(iox::optional<size_t> value) &&;
+    /// Defines the event id value that is emitted if a notifier was identified as dead.
+    auto notifier_dead_event() && -> iox::optional<size_t>;
+    /// Sets the event id value that is emitted if a notifier was identified as dead.
+    void set_notifier_dead_event(iox::optional<size_t> value) &&;
+    /// Defines the maximum allowed time between two consecutive notifications. If a notifiation
+    /// is not sent after the defined time, every [`Listener`]
+    /// that is attached to a [`WaitSet`] will be notified.
+    auto deadline() && -> iox::optional<iox::units::Duration>;
+    /// Sets the deadline of the event service.
+    void set_deadline(iox::optional<iox::units::Duration> value) &&;
 
   private:
     friend class Defaults;
     explicit Event(iox2_config_h* config);
 
-    iox2_config_h* m_config;
+    iox2_config_h* m_config = nullptr;
 };
 
 /// Default settings. These values are used when the user in the code does not specify anything
@@ -233,7 +251,7 @@ class Defaults {
     friend class ::iox2::Config;
     explicit Defaults(iox2_config_h* config);
 
-    iox2_config_h* m_config;
+    iox2_config_h* m_config = nullptr;
 };
 } // namespace config
 
@@ -258,7 +276,7 @@ class ConfigView {
     friend class Service;
 
     explicit ConfigView(iox2_config_ptr ptr);
-    iox2_config_ptr m_ptr;
+    iox2_config_ptr m_ptr = nullptr;
 };
 
 /// Represents the configuration that iceoryx2 will utilize. It is divided into two sections:
@@ -294,6 +312,9 @@ class Config {
     friend class ConfigView;
     friend class config::Global;
     friend class NodeBuilder;
+    template <ServiceType>
+    friend class DeadNodeView;
+
     explicit Config(iox2_config_h handle);
     void drop();
 

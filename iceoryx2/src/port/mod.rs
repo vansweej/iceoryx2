@@ -10,12 +10,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use tiny_fn::tiny_fn;
 
 pub(crate) mod details;
 
+/// Sends requests to a [`Server`](crate::port::server::Server) and receives responses.
+pub mod client;
 /// Defines the event id used to identify the source of an event.
 pub mod event_id;
 /// Receiving endpoint (port) for event based communication
@@ -26,14 +28,13 @@ pub mod notifier;
 pub mod port_identifiers;
 /// Sending endpoint (port) for publish-subscribe based communication
 pub mod publisher;
+/// Receives requests from a [`Client`](crate::port::client::Client) port and sends back responses.
+pub mod server;
 /// Receiving endpoint (port) for publish-subscribe based communication
 pub mod subscriber;
 /// Interface to perform cyclic updates to the ports. Required to deliver history to new
 /// participants or to perform other management tasks.
 pub mod update_connections;
-/// Event handling mechanism to wait on multiple [`Listener`](crate::port::listener::Listener)s
-/// in one call, realizing the reactor pattern. (Event multiplexer)
-pub mod waitset;
 
 use crate::port::port_identifiers::*;
 use crate::service;
@@ -56,8 +57,8 @@ tiny_fn! {
     pub struct DegrationCallback = Fn(service: service::static_config::StaticConfig, publisher_id: UniquePublisherId, subscriber_id: UniqueSubscriberId) -> DegrationAction;
 }
 
-impl<'a> Debug for DegrationCallback<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for DegrationCallback<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "")
     }
 }

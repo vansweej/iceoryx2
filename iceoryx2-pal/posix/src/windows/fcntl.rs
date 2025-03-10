@@ -117,7 +117,7 @@ pub unsafe fn fstat(fd: int, buf: *mut stat_t) -> int {
                 return -1;
             }
 
-            file_stat.st_size = size as i32;
+            file_stat.st_size = size as _;
             file_stat.st_mode = S_IFREG;
 
             let mut info = BY_HANDLE_FILE_INFORMATION::new();
@@ -183,7 +183,13 @@ pub unsafe fn fcntl_int(fd: int, cmd: int, arg: int) -> int {
     }
 
     let socket_fd = match HandleTranslator::get_instance().get(fd) {
-        Some(FdHandleEntry::Socket(socket)) => socket.fd,
+        Some(FdHandleEntry::Socket(mut socket)) => {
+            if cmd == F_SETFL && (arg & O_NONBLOCK != 0) {
+                socket.recv_timeout = None;
+                HandleTranslator::get_instance().update(FdHandleEntry::Socket(socket));
+            }
+            socket.fd
+        }
         Some(FdHandleEntry::UdsDatagramSocket(mut socket)) => {
             if cmd == F_SETFL && (arg & O_NONBLOCK != 0) {
                 socket.recv_timeout = None;

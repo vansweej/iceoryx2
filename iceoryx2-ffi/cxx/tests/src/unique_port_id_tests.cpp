@@ -17,19 +17,15 @@
 #include "iox2/publisher.hpp"
 #include "iox2/service_name.hpp"
 #include "iox2/subscriber.hpp"
+#include "iox2/unique_port_id.hpp"
 
 #include "test.hpp"
 
 #include <atomic>
+#include <gtest/gtest.h>
 
 namespace {
 using namespace iox2;
-
-auto generate_name() -> ServiceName {
-    static std::atomic<uint64_t> COUNTER = 0;
-    return ServiceName::create((std::string("unique_port_id_tests_") + std::to_string(COUNTER.fetch_add(1))).c_str())
-        .expect("");
-}
 
 template <typename T>
 struct UniquePortIdTest : public ::testing::Test {
@@ -37,7 +33,7 @@ struct UniquePortIdTest : public ::testing::Test {
 
     UniquePortIdTest()
         : node { NodeBuilder().create<TYPE>().expect("") }
-        , service_name { generate_name() }
+        , service_name { iox2_testing::generate_service_name() }
         , event { node.service_builder(service_name).event().create().expect("") }
         , pubsub { node.service_builder(service_name).template publish_subscribe<uint64_t>().create().expect("") }
         , listener_1 { event.listener_builder().create().expect("") }
@@ -67,7 +63,27 @@ struct UniquePortIdTest : public ::testing::Test {
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 
-TYPED_TEST_SUITE(UniquePortIdTest, iox2_testing::ServiceTypes);
+TYPED_TEST_SUITE(UniquePortIdTest, iox2_testing::ServiceTypes, );
+
+TYPED_TEST(UniquePortIdTest, unique_port_id_value) {
+    auto null_id = iox::vector<uint8_t, iox2::UNIQUE_PORT_ID_LENGTH> { iox2::UNIQUE_PORT_ID_LENGTH, 0 };
+
+    auto unique_publisher_id = this->publisher_1.id();
+    ASSERT_TRUE(unique_publisher_id.bytes().has_value());
+    ASSERT_NE(unique_publisher_id.bytes().value(), null_id);
+
+    auto unique_subscriber_id = this->subscriber_1.id();
+    ASSERT_TRUE(unique_subscriber_id.bytes().has_value());
+    ASSERT_NE(unique_subscriber_id.bytes().value(), null_id);
+
+    auto unique_notifier_id = this->notifier_1.id();
+    ASSERT_TRUE(unique_notifier_id.bytes().has_value());
+    ASSERT_NE(unique_notifier_id.bytes().value(), null_id);
+
+    auto unique_listener_id = this->listener_1.id();
+    ASSERT_TRUE(unique_listener_id.bytes().has_value());
+    ASSERT_NE(unique_listener_id.bytes().value(), null_id);
+}
 
 TYPED_TEST(UniquePortIdTest, unique_port_id_from_same_port_is_equal) {
     ASSERT_TRUE(this->listener_1.id() == this->listener_1.id());

@@ -22,15 +22,17 @@ use iceoryx2::port::subscriber::{Subscriber, SubscriberReceiveError};
 use iceoryx2::port::update_connections::{ConnectionFailure, UpdateConnections};
 use iceoryx2::prelude::*;
 use iceoryx2_bb_elementary::static_assert::*;
+use iceoryx2_bb_elementary::AsCStr;
 use iceoryx2_ffi_macros::iceoryx2_ffi;
+use iceoryx2_ffi_macros::CStrRepr;
 
-use core::ffi::c_int;
+use core::ffi::{c_char, c_int};
 use core::mem::ManuallyDrop;
 
 // BEGIN types definition
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, CStrRepr)]
 pub enum iox2_subscriber_receive_error_e {
     EXCEEDS_MAX_BORROWED_SAMPLES = IOX2_OK as isize + 1,
     FAILED_TO_ESTABLISH_CONNECTION,
@@ -54,7 +56,7 @@ impl IntoCInt for SubscriberReceiveError {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, CStrRepr)]
 pub enum iox2_connection_failure_e {
     FAILED_TO_ESTABLISH_CONNECTION,
     UNABLE_TO_MAP_PUBLISHERS_DATA_SEGMENT,
@@ -96,7 +98,7 @@ impl SubscriberUnion {
 #[repr(C)]
 #[repr(align(16))] // alignment of Option<SubscriberUnion>
 pub struct iox2_subscriber_storage_t {
-    internal: [u8; 816], // magic number obtained with size_of::<Option<SubscriberUnion>>()
+    internal: [u8; 976], // magic number obtained with size_of::<Option<SubscriberUnion>>()
 }
 
 #[repr(C)]
@@ -160,6 +162,48 @@ impl HandleToType for iox2_subscriber_h_ref {
 // END type definition
 
 // BEGIN C API
+
+/// Returns a string literal describing the provided [`iox2_subscriber_receive_error_e`].
+///
+/// # Arguments
+///
+/// * `error` - The error value for which a description should be returned
+///
+/// # Returns
+///
+/// A pointer to a null-terminated string containing the error message.
+/// The string is stored in the .rodata section of the binary.
+///
+/// # Safety
+///
+/// The returned pointer must not be modified or freed and is valid as long as the program runs.
+#[no_mangle]
+pub unsafe extern "C" fn iox2_subscriber_receive_error_string(
+    error: iox2_subscriber_receive_error_e,
+) -> *const c_char {
+    error.as_const_cstr().as_ptr() as *const c_char
+}
+
+/// Returns a string literal describing the provided [`iox2_connection_failure_e`].
+///
+/// # Arguments
+///
+/// * `error` - The error value for which a description should be returned
+///
+/// # Returns
+///
+/// A pointer to a null-terminated string containing the error message.
+/// The string is stored in the .rodata section of the binary.
+///
+/// # Safety
+///
+/// The returned pointer must not be modified or freed and is valid as long as the program runs.
+#[no_mangle]
+pub unsafe extern "C" fn iox2_connection_failure_string(
+    error: iox2_connection_failure_e,
+) -> *const c_char {
+    error.as_const_cstr().as_ptr() as *const c_char
+}
 
 /// Returns the buffer size of the subscriber
 ///
@@ -255,7 +299,7 @@ pub unsafe extern "C" fn iox2_subscriber_receive(
     subscriber_handle.assert_non_null();
     debug_assert!(!sample_handle_ptr.is_null());
 
-    *sample_handle_ptr = std::ptr::null_mut();
+    *sample_handle_ptr = core::ptr::null_mut();
 
     let init_sample_struct_ptr = |sample_struct_ptr: *mut iox2_sample_t| {
         let mut sample_struct_ptr = sample_struct_ptr;
@@ -273,7 +317,7 @@ pub unsafe extern "C" fn iox2_subscriber_receive(
     let subscriber = &mut *subscriber_handle.as_type();
 
     match subscriber.service_type {
-        iox2_service_type_e::IPC => match subscriber.value.as_ref().ipc.receive() {
+        iox2_service_type_e::IPC => match subscriber.value.as_ref().ipc.receive_custom_payload() {
             Ok(Some(sample)) => {
                 let (sample_struct_ptr, deleter) = init_sample_struct_ptr(sample_struct_ptr);
                 (*sample_struct_ptr).init(
@@ -286,19 +330,21 @@ pub unsafe extern "C" fn iox2_subscriber_receive(
             Ok(None) => (),
             Err(error) => return error.into_c_int(),
         },
-        iox2_service_type_e::LOCAL => match subscriber.value.as_ref().local.receive() {
-            Ok(Some(sample)) => {
-                let (sample_struct_ptr, deleter) = init_sample_struct_ptr(sample_struct_ptr);
-                (*sample_struct_ptr).init(
-                    subscriber.service_type,
-                    SampleUnion::new_local(sample),
-                    deleter,
-                );
-                *sample_handle_ptr = (*sample_struct_ptr).as_handle();
+        iox2_service_type_e::LOCAL => {
+            match subscriber.value.as_ref().local.receive_custom_payload() {
+                Ok(Some(sample)) => {
+                    let (sample_struct_ptr, deleter) = init_sample_struct_ptr(sample_struct_ptr);
+                    (*sample_struct_ptr).init(
+                        subscriber.service_type,
+                        SampleUnion::new_local(sample),
+                        deleter,
+                    );
+                    *sample_handle_ptr = (*sample_struct_ptr).as_handle();
+                }
+                Ok(None) => (),
+                Err(error) => return error.into_c_int(),
             }
-            Ok(None) => (),
-            Err(error) => return error.into_c_int(),
-        },
+        }
     }
 
     IOX2_OK

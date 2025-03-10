@@ -16,7 +16,7 @@
 //!
 //! ```ignore
 //! use iceoryx2_bb_posix::mutex::*;
-//! use std::time::Duration;
+//! use core::time::Duration;
 //! use iceoryx2_bb_posix::clock::ClockType;
 //!
 //! let handle = MutexHandle::<i32>::new();
@@ -26,7 +26,6 @@
 //!               .is_interprocess_capable(false)
 //!               .mutex_type(MutexType::WithDeadlockDetection)
 //!               .thread_termination_behavior(MutexThreadTerminationBehavior::ReleaseWhenLocked)
-//!               .priority_inheritance(MutexPriorityInheritance::Inherit)
 //!               .create(1234, &handle)
 //!               .expect("failed to create mutex");
 //!
@@ -48,13 +47,13 @@
 pub use crate::ipc_capable::{Handle, IpcCapable};
 
 use crate::ipc_capable::internal::{Capability, HandleStorage, IpcConstructible};
+use core::cell::UnsafeCell;
+use core::fmt::Debug;
+use core::ops::{Deref, DerefMut};
+use core::time::Duration;
 use iceoryx2_bb_elementary::scope_guard::*;
 use iceoryx2_bb_log::{fail, fatal_panic, warn};
 use iceoryx2_pal_posix::*;
-use std::cell::UnsafeCell;
-use std::fmt::Debug;
-use std::ops::{Deref, DerefMut};
-use std::time::Duration;
 
 use crate::adaptive_wait::*;
 use crate::clock::{AsTimespec, ClockType, NanosleepError, Time, TimeError};
@@ -71,20 +70,6 @@ pub enum MutexCreationError {
     UnableToSetType,
     UnableToSetProtocol,
     UnableToSetThreadTerminationBehavior,
-    UnableToSetPriorityCeiling,
-    UnknownError(i32),
-}
-
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
-pub enum MutexGetPrioCeilingError {
-    InsufficientPermissions,
-    UnknownError(i32),
-}
-
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
-pub enum MutexSetPrioCeilingError {
-    ValueOutOfRange,
-    InsufficientPermissions,
     UnknownError(i32),
 }
 
@@ -114,21 +99,19 @@ pub enum MutexTimedLockError<'mutex, 'handle, T: Sized + Debug> {
     FailureInInternalClockWhileWait(TimeError),
 }
 
-impl<'mutex, 'handle, T: Debug> From<TimeError> for MutexTimedLockError<'mutex, 'handle, T> {
+impl<T: Debug> From<TimeError> for MutexTimedLockError<'_, '_, T> {
     fn from(v: TimeError) -> Self {
         MutexTimedLockError::FailureInInternalClockWhileWait(v)
     }
 }
 
-impl<'mutex, 'handle, T: Debug> From<NanosleepError> for MutexTimedLockError<'mutex, 'handle, T> {
+impl<T: Debug> From<NanosleepError> for MutexTimedLockError<'_, '_, T> {
     fn from(v: NanosleepError) -> Self {
         MutexTimedLockError::NanosleepError(v)
     }
 }
 
-impl<'mutex, 'handle, T: Debug> From<AdaptiveWaitError>
-    for MutexTimedLockError<'mutex, 'handle, T>
-{
+impl<T: Debug> From<AdaptiveWaitError> for MutexTimedLockError<'_, '_, T> {
     fn from(v: AdaptiveWaitError) -> Self {
         MutexTimedLockError::AdaptiveWaitError(v)
     }
@@ -236,21 +219,6 @@ pub enum MutexType {
     WithDeadlockDetection = posix::PTHREAD_MUTEX_ERRORCHECK,
 }
 
-/// Defines how the priority of a mutex owning thread changes when another thread
-/// with an higher priority would like to acquire the mutex.
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
-#[repr(i32)]
-pub enum MutexPriorityInheritance {
-    /// No change in priority
-    None = posix::PTHREAD_PRIO_NONE,
-    /// The priority of a thread holding the mutex is always promoted to the priority set up
-    /// in [`MutexBuilder::priority_ceiling()`].
-    Inherit = posix::PTHREAD_PRIO_INHERIT,
-    /// The priority of a thread holding the mutex is promoted to the priority of the
-    /// highest priority thread waiting for the lock.
-    Protect = posix::PTHREAD_PRIO_PROTECT,
-}
-
 /// Defines the behavior when a mutex owning thread is terminated
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 #[repr(i32)]
@@ -280,8 +248,6 @@ pub struct MutexBuilder {
     pub(crate) is_interprocess_capable: bool,
     pub(crate) mutex_type: MutexType,
     pub(crate) thread_termination_behavior: MutexThreadTerminationBehavior,
-    pub(crate) priority_inheritance: MutexPriorityInheritance,
-    pub(crate) priority_ceiling: Option<i32>,
     pub(crate) clock_type: ClockType,
 }
 
@@ -290,8 +256,6 @@ impl Default for MutexBuilder {
         Self {
             is_interprocess_capable: true,
             mutex_type: MutexType::Normal,
-            priority_inheritance: MutexPriorityInheritance::None,
-            priority_ceiling: None,
             thread_termination_behavior: MutexThreadTerminationBehavior::StallWhenLocked,
             clock_type: ClockType::default(),
         }
@@ -327,19 +291,6 @@ impl MutexBuilder {
         self
     }
 
-    /// Defines the [`MutexPriorityInheritance`] mode.
-    pub fn priority_inheritance(mut self, value: MutexPriorityInheritance) -> Self {
-        self.priority_inheritance = value;
-        self
-    }
-
-    /// Defines to priority to which a thread is promoted when another thread is waiting on the
-    /// lock and [`MutexPriorityInheritance::Inherit`] is set.
-    pub fn priority_ceiling(mut self, value: i32) -> Self {
-        self.priority_ceiling = Some(value);
-        self
-    }
-
     fn initialize_mutex<T: Debug>(
         &self,
         mutex: *mut posix::pthread_mutex_t,
@@ -362,7 +313,7 @@ impl MutexBuilder {
                     _ => {
                         fatal_panic!(
                             "Mutex<{}>, failed to destroy mutex attributes - possible leak?",
-                            std::any::type_name::<T>()
+                            core::any::type_name::<T>()
                         );
                     }
                 },
@@ -392,7 +343,7 @@ impl MutexBuilder {
         if unsafe {
             posix::pthread_mutexattr_setprotocol(
                 mutex_attributes.get_mut(),
-                self.priority_inheritance as i32,
+                posix::PTHREAD_PRIO_NONE,
             )
         } != 0
         {
@@ -409,21 +360,6 @@ impl MutexBuilder {
         {
             fail!(from self, with MutexCreationError::UnableToSetThreadTerminationBehavior,
                 "{} due to a failure while setting the mutex thread termination behavior in mutex attributes.", msg);
-        }
-
-        if self.priority_ceiling.is_some() {
-            let msg = "Failed to set the mutex priority ceiling";
-            handle_errno!(MutexCreationError, from self,
-                errno_source unsafe {
-                    posix::pthread_mutexattr_setprioceiling(
-                    mutex_attributes
-                        .get_mut(), self.priority_ceiling.unwrap())
-                    }.into(),
-                continue_on_success,
-                success Errno::ESUCCES => (),
-                Errno::EPERM => (UnableToSetPriorityCeiling, "{} since the user does not have enough permissions to set them.", msg),
-                v => (UnableToSetPriorityCeiling, "{} since an unknown error has occurred ({}).",msg, v)
-            );
         }
 
         match unsafe { posix::pthread_mutex_init(mutex, mutex_attributes.get()) }.into() {
@@ -529,7 +465,7 @@ impl<T: Sized + Debug> MutexHandle<T> {
 ///
 /// ```
 /// use iceoryx2_bb_posix::mutex::*;
-/// use std::time::Duration;
+/// use core::time::Duration;
 ///
 /// let handle = MutexHandle::<i32>::new();
 /// let mutex = MutexBuilder::new().create(5, &handle)
@@ -570,7 +506,7 @@ impl<'a, T: Debug> IpcCapable<'a, MutexHandle<T>> for Mutex<'a, T> {
     }
 }
 
-impl<'a, T: Debug> Mutex<'a, T> {
+impl<T: Debug> Mutex<'_, T> {
     /// Blocks until the ownership of the lock could be acquired. If it was successful it returns a
     /// [`MutexGuard`] to allow access to the underlying value.
     /// If the previously owning thread has died and
@@ -685,31 +621,6 @@ impl<'a, T: Debug> Mutex<'a, T> {
         if unsafe { posix::pthread_mutex_consistent(self.handle.handle.get()) } != 0 {
             warn!(from self, "pthread_mutex_consistent has no effect since either the mutex was not a robust mutex or the mutex was not in an inconsistent state.");
         }
-    }
-
-    /// Returns the current priority ceiling of the mutex.
-    pub fn priority_ceiling(&self) -> Result<i32, MutexGetPrioCeilingError> {
-        let mut value: i32 = 0;
-        let msg = "Unable to acquire priority ceiling";
-        handle_errno!(MutexGetPrioCeilingError, from self,
-            errno_source unsafe { posix::pthread_mutex_getprioceiling(self.handle.handle.get(), &mut value) }.into(),
-            success Errno::ESUCCES => value,
-            Errno::EPERM => (InsufficientPermissions, "{} due to insufficient permissions.", msg),
-            v => (UnknownError(v as i32), "{} since an unknown error occurred ({}).", msg, v)
-        );
-    }
-
-    /// Sets a new priority ceiling for the mutex and returns the old value.
-    pub fn set_priority_ceiling(&self, value: i32) -> Result<i32, MutexSetPrioCeilingError> {
-        let mut previous_value: i32 = 0;
-        let msg = "Unable to set priority ceiling";
-        handle_errno!(MutexSetPrioCeilingError, from self,
-            errno_source unsafe { posix::pthread_mutex_setprioceiling(self.handle.handle.get(), value, &mut previous_value) }.into(),
-            success Errno::ESUCCES => previous_value,
-            Errno::EINVAL => (ValueOutOfRange, "{} since the new priority ceiling value {} is out of range.", msg, value),
-            Errno::EPERM => (InsufficientPermissions, "{} due to insufficient permissions.", msg),
-            v => (UnknownError(v as i32), "{} since an unknown error occurred ({}).", msg, v)
-        );
     }
 
     pub(crate) fn release(&self) -> Result<(), MutexUnlockError> {

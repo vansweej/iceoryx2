@@ -14,10 +14,9 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(unused_variables)]
 
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use iceoryx2_pal_concurrency_sync::barrier::Barrier;
-use iceoryx2_pal_concurrency_sync::condition_variable::*;
 use iceoryx2_pal_concurrency_sync::iox_atomic::IoxAtomicU64;
 use iceoryx2_pal_concurrency_sync::mutex::Mutex;
 use iceoryx2_pal_concurrency_sync::rwlock::*;
@@ -42,9 +41,8 @@ pub type ino_t = u64;
 pub type int = core::ffi::c_int;
 pub type long = core::ffi::c_long;
 pub type mode_t = u64;
-pub type mqd_t = u64;
 pub type nlink_t = u64;
-pub type off_t = crate::internal::off_t;
+pub type off_t = i64;
 pub type pid_t = u32;
 pub type rlim_t = i64;
 pub type __rlim_t = u64;
@@ -140,20 +138,6 @@ impl Struct for pthread_rwlock_t {
     }
 }
 
-pub struct pthread_cond_t {
-    pub(crate) cv: ConditionVariable,
-}
-impl Struct for pthread_cond_t {
-    fn new() -> Self {
-        Self {
-            cv: ConditionVariable::new(),
-        }
-    }
-}
-
-pub struct pthread_condattr_t {}
-impl Struct for pthread_condattr_t {}
-
 #[repr(C)]
 pub struct pthread_mutex_t {
     pub(crate) mtx: Mutex,
@@ -202,14 +186,6 @@ pub struct flock {
 }
 impl Struct for flock {}
 
-pub struct mq_attr {
-    pub mq_flags: long,
-    pub mq_maxmsg: long,
-    pub mq_msgsize: long,
-    pub mq_curmsgs: long,
-}
-impl Struct for mq_attr {}
-
 pub struct rlimit {
     pub rlim_cur: rlim_t,
     pub rlim_max: rlim_t,
@@ -220,24 +196,6 @@ pub struct sched_param {
     pub sched_priority: int,
 }
 impl Struct for sched_param {}
-
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct sigaction_t {
-    pub iox2_sa_handler: sighandler_t,
-    pub iox2_sa_mask: sigset_t,
-    pub iox2_sa_flags: int,
-}
-
-impl Struct for sigaction_t {
-    fn new() -> Self {
-        Self {
-            iox2_sa_handler: 0,
-            iox2_sa_mask: sigset_t::new(),
-            iox2_sa_flags: 0,
-        }
-    }
-}
 
 #[repr(C)]
 pub struct stat_t {
@@ -255,13 +213,7 @@ pub struct stat_t {
     pub st_blksize: blksize_t,
     pub st_blocks: blkcnt_t,
 }
-impl From<crate::internal::stat> for stat_t {
-    fn from(value: crate::internal::stat) -> Self {
-        stat_t::new()
-    }
-}
 impl Struct for stat_t {}
-impl Struct for crate::internal::stat {}
 
 pub type timespec = crate::internal::timespec;
 impl Struct for timespec {}

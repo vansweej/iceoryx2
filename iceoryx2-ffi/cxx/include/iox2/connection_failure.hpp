@@ -25,6 +25,7 @@ enum class ConnectionFailure : uint8_t {
     /// Failures when mapping the corresponding data segment
     UnableToMapPublishersDataSegment
 };
+
 } // namespace iox2
 
 #endif

@@ -10,7 +10,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use std::mem::MaybeUninit;
+use core::mem::MaybeUninit;
 
 pub use crate::event::*;
 use crate::static_storage::file::NamedConceptConfiguration;
@@ -71,7 +71,10 @@ impl NamedConceptConfiguration for Configuration {
 
 impl From<Configuration> for crate::communication_channel::unix_datagram::Configuration {
     fn from(value: Configuration) -> Self {
-        Self::default().suffix(&value.suffix).path_hint(&value.path)
+        Self::default()
+            .prefix(&value.prefix)
+            .suffix(&value.suffix)
+            .path_hint(&value.path)
     }
 }
 
@@ -274,7 +277,7 @@ impl crate::event::Listener for Listener {
 
     fn timed_wait_one(
         &self,
-        timeout: std::time::Duration,
+        timeout: core::time::Duration,
     ) -> Result<Option<TriggerId>, ListenerWaitError> {
         self.wait(
            &format!("Unable to wait for signal with timeout {:?} on event::unix_datagram_socket::Listener", timeout),

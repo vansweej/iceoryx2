@@ -20,8 +20,7 @@ Listener<S>::Listener(iox2_listener_h handle)
 }
 
 template <ServiceType S>
-Listener<S>::Listener(Listener&& rhs) noexcept
-    : m_handle { nullptr } {
+Listener<S>::Listener(Listener&& rhs) noexcept {
     *this = std::move(rhs);
 }
 
@@ -50,11 +49,28 @@ void Listener<S>::drop() {
 }
 
 template <ServiceType S>
+auto Listener<S>::file_descriptor() const -> FileDescriptorView {
+    return FileDescriptorView(iox2_listener_get_file_descriptor(&m_handle));
+}
+
+template <ServiceType S>
 auto Listener<S>::id() const -> UniqueListenerId {
     iox2_unique_listener_id_h id_handle = nullptr;
 
     iox2_listener_id(&m_handle, nullptr, &id_handle);
     return UniqueListenerId { id_handle };
+}
+
+template <ServiceType S>
+auto Listener<S>::deadline() const -> iox::optional<iox::units::Duration> {
+    uint64_t seconds = 0;
+    uint32_t nanoseconds = 0;
+
+    if (iox2_listener_deadline(&m_handle, &seconds, &nanoseconds)) {
+        return { iox::units::Duration::fromSeconds(seconds) + iox::units::Duration::fromNanoseconds(nanoseconds) };
+    }
+
+    return iox::nullopt;
 }
 
 void wait_callback(const iox2_event_id_t* event_id, iox2_callback_context context) {
@@ -75,8 +91,8 @@ auto Listener<S>::try_wait_all(const iox::function<void(EventId)>& callback) -> 
 }
 
 template <ServiceType S>
-auto Listener<S>::timed_wait_all(const iox::function<void(EventId)>& callback,
-                                 const iox::units::Duration& timeout) -> iox::expected<void, ListenerWaitError> {
+auto Listener<S>::timed_wait_all(const iox::function<void(EventId)>& callback, const iox::units::Duration& timeout)
+    -> iox::expected<void, ListenerWaitError> {
     auto ctx = internal::ctx(callback);
     auto timeout_timespec = timeout.timespec();
 
